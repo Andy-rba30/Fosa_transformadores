@@ -228,7 +228,7 @@ namespace BlockRebar.Tests
 
             // --- F4 ---
             var f4 = p.Bars.Where(b => b.Family == Family.F4).ToList();
-            Check(f4.Count == 84, "F4 sin esquinas duplicadas y entre las barras de F2: 25 + 25 + 17 + 17 = 84 barras (" + f4.Count + ")");
+            Check(f4.Count == 88, "F4 sin esquinas duplicadas, entre las barras de F2 y con barra en cada esquina: 26 + 26 + 18 + 18 = 88 barras (" + f4.Count + ")");
             Check(p.GroupsOf(Family.F4) == 4, "F4 en 4 conjuntos, uno por cara (" + p.GroupsOf(Family.F4) + ")");
             if (f4.Count > 0)
             {
@@ -320,7 +320,7 @@ namespace BlockRebar.Tests
                 Near(f8.Max(b => b.Length), 4800 - 2 * (40 + 4.7625), "F8 largo prolongado hasta la esquina");
             }
             Check(p.Groups.Count == 2 + 2 + 2 + 4 + 4 + 4 + 4 + 4, "26 conjuntos en total (" + p.Groups.Count + ")");
-            Clashes(p, "caso del plano");
+            Clashes(p, "caso del plano", true);
             Check(p.Skipped == 0, "sin tramos cortos omitidos (" + p.Skipped + ")");
             Check(p.Warnings.Count == 0, "sin avisos (" + p.Warnings.Count + ")");
 
@@ -389,13 +389,16 @@ namespace BlockRebar.Tests
 
         private static string Indent(string s) => "  " + s.Replace(Environment.NewLine, Environment.NewLine + "  ");
 
-        /// <summary>Informe de choques del plan (tramo contra tramo, 3D, tolerancia 1 mm) y comprobacion de que no hay ninguno.</summary>
-        private static ClashReport Clashes(BlockPlan p, string name)
+        /// <summary>Informe de choques del plan (tramo contra tramo, 3D, tolerancia 1 mm) y comprobacion de que no hay ninguno; y separaciones reales (nominal + 5 mm).</summary>
+        private static ClashReport Clashes(BlockPlan p, string name, bool printSpacing = false)
         {
             ClashReport r = ClashCheck.Check(p, Mm(1));
             Console.WriteLine("  Informe de choques (" + name + "): " + r.Describe().Replace(Environment.NewLine, Environment.NewLine + "  "));
             Check(r.Clashes.Count == 0, "sin choques en " + name + " (" + r.Clashes.Count + ")");
             Check(r.UnexpectedContacts.Count == 0, "sin contactos no previstos en " + name + " (" + r.UnexpectedContacts.Count + ")");
+            BlockPlan.SpacingReport sp = p.CheckSpacing(5);
+            if (printSpacing) Console.WriteLine("  Separacion maxima real (" + name + "):" + Environment.NewLine + "    " + sp.Describe().Replace(Environment.NewLine, Environment.NewLine + "    "));
+            Check(sp.Ok, "separaciones reales dentro de nominal + 5 mm en " + name + (sp.Ok ? "" : ": " + string.Join(" | ", sp.Violations)));
             return r;
         }
 
@@ -432,7 +435,7 @@ namespace BlockRebar.Tests
             if (p.Error != null) return;
             Check(p.CountOf(Family.F4) == 37 && p.GroupsOf(Family.F4) == 1, "F4 solo en la cara de foso de la plataforma, fuera de la zona de patas de F1/F2 y entre las barras de F2: 37 barras, 1 conjunto (" + p.CountOf(Family.F4) + " / " + p.GroupsOf(Family.F4) + ")");
             var f4a = p.Bars.Where(b => b.Family == Family.F4).ToList();
-            Check(f4a.Min(b => b.Points[0].U) > Mm(75 + 15.875 + 31.75 + 31.75 + 7.9), "el primer vertical de F4 queda por dentro de las patas de F1 y F2 (u=" + ToMm(f4a.Min(b => b.Points[0].U)) + ")");
+            Check(f4a.Min(b => b.Points[0].U) >= Mm(75 + 31.75 + 31.75 + 7.9 + 1.5), "el primer vertical de F4 queda por dentro de la zona de patas de F1 y F2 (138.5 + d/2 + tol; u=" + ToMm(f4a.Min(b => b.Points[0].U)) + ")");
             Check(p.CountOf(Family.F5) == 2 && p.GroupsOf(Family.F5) == 1, "F5 fromTop: 2 niveles en una cara (1213.5 y 1013.5; 813.5 queda bajo el fondo de la canaleta + recubrimiento) (" + p.CountOf(Family.F5) + ")");
             PlannedBar f5 = p.Bars.Where(b => b.Family == Family.F5).OrderBy(b => b.Points[0].Z).First();
             Near(f5.Points[0].Z, 1300 - 50 - 31.75 - 4.7625 - 200, "nivel inferior de F5 a 200 del superior");
@@ -489,7 +492,7 @@ namespace BlockRebar.Tests
             Check(p.CountOf(Family.F6) == 0 && p.CountOf(Family.F7) == 0 && p.CountOf(Family.F8) == 0, "sin F6 / F7 / F8 (no hay murete)");
             Check(p.GroupsOf(Family.F4) == 4 && p.GroupsOf(Family.F5) == 4, "F4 y F5 en las 4 caras del foso");
             // F4: posiciones desde d/2 de la esquina entrante: 1500 - 15.875 -> 12 huecos -> 13; 1000 - 15.875 -> 8 -> 9
-            Check(p.CountOf(Family.F4) == 2 * 12 + 2 * 9, "F4 entre las barras de F2: 12 + 12 + 9 + 9 barras (" + p.CountOf(Family.F4) + ")");
+            Check(p.CountOf(Family.F4) == 2 * 13 + 2 * 9, "F4 entre las barras de F2 con extremos exactos: 13 + 13 + 9 + 9 barras (" + p.CountOf(Family.F4) + ")");
             PlannedBar f4 = p.Bars.First(b => b.Family == Family.F4);
             Check(t.RecessAt(f4.Points[2].Plan) != null, "el pie de F4 queda bajo el foso central");
             // F5 por tramos prolongados mas alla de la esquina entrante: cruce con la barra contigua + traslape 400

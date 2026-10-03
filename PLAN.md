@@ -38,7 +38,7 @@ add-in añada su botón al desplegable común.
 | Fase | Contenido | Estado |
 |------|-----------|--------|
 | 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | hecho, OK recibido |
-| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `ClashCheck`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **hecho** (278 comprobaciones OK, 0 choques; el proyecto principal compila en Linux) |
+| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `ClashCheck`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **hecho** (286 comprobaciones OK, 0 choques, separaciones dentro de nominal + 5; el proyecto principal compila en Linux) |
 | 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | **siguiente** |
 | 2b (opcional) | Botón **Crear vistas de sección en Revit** tras Armar (`SectionViews.cs`): dos `ViewSection` A y B, acero sin ocultar, etiquetas opcionales. No bloquea la fase 1 | pendiente |
 | 3 | Pruebas del usuario en Revit 2027.2 y correcciones | pendiente |
@@ -490,11 +490,20 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - **Zona de patas exteriores**: hasta donde llegan las patas de F1 / F2 / F3 junto a las caras
   exteriores (según el rango de cotas). El primer vertical de F4 junto a una esquina exterior,
   el pie de F4 hacia una cara exterior y las prolongaciones de F5 hacia ella paran antes.
-- **F4 entre las barras de F2**: los verticales de F4 atraviesan la malla F2; sus posiciones
-  se ajustan a la retícula de las barras de F2 que cruzan su plano (paso igual al de F2, o un
-  submúltiplo bajo la separación máxima, fase centrada en la banda libre). Y las barras de F2
+- **F4 entre las barras de F2**: los verticales de F4 atraviesan la malla F2. En cada cara se
+  reparte primero de extremo a extremo (barra exacta en la esquina que posee; la primera a una
+  separación, en distancia de planta, de la barra de esquina de la cara anterior) comprobando
+  que cada posición queda a más de la suma de radios + 1 mm de las barras de F2 que cruzan el
+  plano del vertical; si alguna coincide, con más barras; si no, moviendo el inicio (o el
+  final cuando no es esquina propia) dentro de lo admisible; y en último término ajustando a
+  la retícula de F2 y añadiendo la barra de esquina que falte (aviso). Las barras de F2
   paralelas a una cara de foso esquivan el plano de sus verticales repartiéndose con más
   barras si hace falta (aviso).
+- **Separación real máxima** (`BlockPlan.CheckSpacing`, en todos los tests): paso de cada
+  conjunto y, en F4 / F6 / F7, separación entre barras consecutivas de cada cara INCLUIDOS los
+  extremos (hasta la barra de esquina de la cara perpendicular, en distancia de planta, o
+  hasta el límite admisible de la cara). Ninguna puede superar la nominal + 5 mm. Dos barras
+  iguales a más de la separación nominal no forman conjunto (quedan sueltas).
 - **Cruces de esquina a la misma cota**: los tramos de F5 y F8 de las caras a lo largo de v
   van un diámetro más bajos que los de las caras a lo largo de u; lo mismo los pies de F4
   (que convergen en las esquinas entrantes de un foso). El cruce queda en contacto previsto.
@@ -543,6 +552,7 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] OK del usuario al plan (decisiones de arriba).
 - [x] Fase 1: clases puras (incluida `BlockSection`) + Tests: `cd Tests && dotnet run` → 278 comprobaciones correctas, 0 fallos, 0 choques y 0 contactos no previstos en todos los casos. `dotnet build BlockRebar.csproj -c Release` compila (0 errores) y deja `Clipper2Lib.dll` junto a `BlockRebar.dll`.
 - [x] Revisión de choques (`ClashCheck`), regla de esquinas, retranqueo de F2, F5 por dentro de la pata más interior, cruces desfasados, `layoutMode` fromTop.
+- [x] Separación real máxima (`CheckSpacing`): 286 comprobaciones OK, F4 vuelve a 88 con barra exacta en cada esquina.
 - [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
 - [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
