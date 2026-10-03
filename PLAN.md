@@ -61,6 +61,8 @@ add-in añada su botón al desplegable común.
 | `BlockSection.cs` | Sección pura: `BlockSection.Cut(plan, topología, líneaDeCorte)` devuelve el perfil del hormigón en ese corte, los círculos (barra, familia, posición, diámetro), las polilíneas contenidas en el plano, las cotas (ancho total, tramos murete / foso / núcleo, profundidad de foso, espesor de base), los niveles y los anclajes de las etiquetas por familia y lado | nuevo (puro) |
 | `BlockOutline.cs` | Lectura del sólido de Revit: zBase, zTope, fondos de foso, anillos, caras verticales, motivos de rechazo; `BlockFrame` (sistema local u/v por dirección, perfiles reales de las dos secciones muestreados con `Solid.IntersectWithCurve`) | nuevo, patrón de `FootingOutline` |
 | `HostAnalysis.cs` | Resultado por elemento (topología o motivo de rechazo) + dirección propia | adaptado |
+| `BarTypes.cs` | Tipos de barra del proyecto (`RebarBarType`): nombre exacto o fragmento, diámetro nominal y diámetros de doblado (estándar y de estribo) para `PlanDiameters` | nuevo |
+| `Log.cs` | Registro de texto en `%Temp%\BlockRebar.log` (diagnóstico por elemento, informe de "Analizar sin armar", excepciones); se recorta al pasar de 2 MB | nuevo |
 | `RebarGenerator.cs` | Crea los `Rebar` con `CreateFromCurves` (polilíneas con patas), arrays `SetLayoutAsFixedNumber`, Partición, y las **dos redes de seguridad** | adaptado |
 | `RebarOptionsWindow.cs` | Ventana WPF en código: lista de bloques, panel por familia, recubrimientos y partición, lámina (planta + sección A-A + sección B-B), leyenda, interruptores, botones | adaptado |
 | `PreviewState.cs` | Estado compartido de las tres vistas: posición de los cortes A y B, barra resaltada, familia aislada, capa de planta mostrada, interruptores (cotas, etiquetas, recubrimientos); avisa a las vistas para redibujar | nuevo |
@@ -553,10 +555,19 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] Fase 1: clases puras (incluida `BlockSection`) + Tests: `cd Tests && dotnet run` → 278 comprobaciones correctas, 0 fallos, 0 choques y 0 contactos no previstos en todos los casos. `dotnet build BlockRebar.csproj -c Release` compila (0 errores) y deja `Clipper2Lib.dll` junto a `BlockRebar.dll`.
 - [x] Revisión de choques (`ClashCheck`), regla de esquinas, retranqueo de F2, F5 por dentro de la pata más interior, cruces desfasados, `layoutMode` fromTop.
 - [x] Separación real máxima (`CheckSpacing`): 286 comprobaciones OK, F4 vuelve a 88 con barra exacta en cada esquina.
-- [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
-- [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
+- [x] Entrega 2a (lectura y diagnóstico, sin crear barras): `BlockOutline` (caras, zBase, zTope, fondos, rechazos con motivo, `BlockFrame` con perfil muestreado), `HostAnalysis` (informe), `BarTypes`, `Log`, `PreviewState`, `PlanPreview` (planta con cortes A–A / B–B arrastrables), `SectionPreview` (secciones con círculos, polilíneas, etiquetas, cotas, niveles, recubrimientos), `RebarOptionsWindow` (lista, paneles F1…F8, lámina, leyenda que aísla, "Analizar sin armar" con `ReportWindow`, Armar desactivado), `ArmarBloqueCommand` (sin transacción), README e INSTALADOR. `dotnet build BlockRebar.csproj -c Release` compila en Linux (0 errores). **Pendiente de probar en Revit 2027.2.**
+- [ ] Entrega 2b: `RebarGenerator` (CreateFromCurves con patas, arrays, Partición, dos redes de seguridad, subtransacción por elemento, informe con pesos) y activar el botón Armar (`RebarOptionsWindow.BuildAvailable`).
+- [ ] Entrega 2c (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
 - [ ] Fase 4 (opcional): rejillas de foso.
+
+### Notas de implementación de la entrega 2a
+
+- `BlockOutline.Frame(mode, angle, wallMaxFt)`: la caché de sistemas locales incluye el ancho máximo de murete, así el campo "Murete hasta" de la ventana reclasifica plataformas y muretes en vivo sin volver a leer el sólido.
+- La ventana es el único suscriptor de `PreviewState.Changed`: al mover un corte recalcula solo la sección afectada (`BlockSection.Cut` con `BlockFrame.SampledTop`) y redibuja las tres vistas; pasar el ratón o aislar una familia solo redibuja.
+- Escala del título de cada sección: `N = 1152 / k` (k = píxeles por pie; 96 ppp) redondeada a la escala normalizada más cercana (1:20, 1:25…), con "≈" si difiere más del 8 %.
+- Etiquetas y niveles en dos columnas (izquierda: "izq" y "centro"; derecha: "der" y los niveles) sin solapes, con línea de referencia al anclaje.
+- "Analizar sin armar" vuelca el mismo informe en `%Temp%\BlockRebar.log` (`Log.Block`), además de los diagnósticos de cada elemento al abrir el comando.
 
 ## Cómo retomar
 
