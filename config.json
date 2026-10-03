@@ -32,5 +32,20 @@
   "levelReference": "shared",
   "preview": { "showDims": true, "showLabels": true, "showCovers": false, "planLayer": "F1" },
   "sectionViews": { "enabled": false, "scale": 20, "marginMm": 500, "depthMm": 500, "viewTypeName": "",
-                    "nameTemplate": "{marca} - Sección {letra}", "tagFamilyName": "", "showSolid": false }
+                    "nameTemplate": "{marca} - Sección {letra}", "tagFamilyName": "", "showSolid": false },
+
+  "grids": {
+    "mode": "model", "maxLengthMm": 825, "clearanceMm": 5, "widthReductionMm": 10,
+    "types": [ { "name": "Rejilla IG-01", "designation": "IG-01", "heightMm": 38, "kgPerM2": 31.0 } ],
+    "defaultType": "Rejilla IG-01",
+    "familyName": "Rejilla ARBA", "familyTemplatePath": "",
+    "angles": {
+      "enabled": true, "familyName": "L-Angle", "typeName": "L2-1/2X2-1/2X1/4", "kgPerMDefault": 6.10, "boltsPerAngle": 5,
+      "legMm": 63.5, "rotationDeg": 0, "cornerClearanceMm": 10,
+      "longCore":  { "mode": "fixedLength", "lengthMm": 3050, "setbackMm": 125 },
+      "longWall":  { "mode": "fixedLength", "lengthMm": 3050, "setbackMm": 125 },
+      "shortCore": { "mode": "fixedLength", "lengthMm": 2070, "setbackMm": 115 },
+      "shortWall": { "mode": "fixedLength", "lengthMm": 3400, "setbackMm": 50 }
+    }
+  }
 }

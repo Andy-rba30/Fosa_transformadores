@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -191,6 +192,97 @@ namespace BlockRebar
         [JsonPropertyName("showSolid")] public bool ShowSolid { get; set; } = false;
     }
 
+    /// <summary>Un tipo de rejilla de la lista de la ventana (= un tipo de la familia Generic Model).</summary>
+    public class GridTypeCfg
+    {
+        [JsonPropertyName("name")] public string Name { get; set; } = "Rejilla IG-01";
+        [JsonPropertyName("designation")] public string Designation { get; set; } = "IG-01";
+        /// <summary>Alto (espesor) de la rejilla (mm).</summary>
+        [JsonPropertyName("heightMm")] public double HeightMm { get; set; } = 38;
+        [JsonPropertyName("kgPerM2")] public double KgPerM2 { get; set; } = 31.0;
+        public GridTypeCfg Copy() => new GridTypeCfg { Name = Name, Designation = Designation, HeightMm = HeightMm, KgPerM2 = KgPerM2 };
+    }
+
+    /// <summary>Longitud del angulo en una categoria de borde: fija y centrada, o por retiro en los extremos.</summary>
+    public class AngleCategoryCfg
+    {
+        /// <summary>"fixedLength" (longitud fija centrada; si no cabe pasa a retiro y avisa) o "setback" (borde menos dos retiros).</summary>
+        [JsonPropertyName("mode")] public string Mode { get; set; } = "fixedLength";
+        [JsonPropertyName("lengthMm")] public double LengthMm { get; set; } = 3050;
+        [JsonPropertyName("setbackMm")] public double SetbackMm { get; set; } = 125;
+        public AngleCategoryCfg() { }
+        public AngleCategoryCfg(double length, double setback) { LengthMm = length; SetbackMm = setback; }
+    }
+
+    /// <summary>Angulos de borde de foso (Structural Framing) y pernos de expansion (solo contados).</summary>
+    public class AnglesCfg
+    {
+        [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
+        /// <summary>Familia de Structural Framing (exacta o fragmento) y tipo; regla de nombres de los tipos de barra.</summary>
+        [JsonPropertyName("familyName")] public string FamilyName { get; set; } = "L-Angle";
+        [JsonPropertyName("typeName")] public string TypeName { get; set; } = "L2-1/2X2-1/2X1/4";
+        /// <summary>Peso lineal si no se puede leer el parametro de tipo "W" (kg/m).</summary>
+        [JsonPropertyName("kgPerMDefault")] public double KgPerMDefault { get; set; } = 6.10;
+        [JsonPropertyName("boltsPerAngle")] public int BoltsPerAngle { get; set; } = 5;
+        /// <summary>Ala del angulo (mm): el eje de la viga va a media ala del borde y de la cara superior.</summary>
+        [JsonPropertyName("legMm")] public double LegMm { get; set; } = 63.5;
+        /// <summary>Giro de la seccion (grados) para orientar las alas; el foso queda siempre a la izquierda de la viga.</summary>
+        [JsonPropertyName("rotationDeg")] public double RotationDeg { get; set; } = 0;
+        /// <summary>Holgura entre angulos que se tocarian en una esquina (mm).</summary>
+        [JsonPropertyName("cornerClearanceMm")] public double CornerClearanceMm { get; set; } = 10;
+        [JsonPropertyName("longCore")] public AngleCategoryCfg LongCore { get; set; } = new AngleCategoryCfg(3050, 125);
+        [JsonPropertyName("longWall")] public AngleCategoryCfg LongWall { get; set; } = new AngleCategoryCfg(3050, 125);
+        [JsonPropertyName("shortCore")] public AngleCategoryCfg ShortCore { get; set; } = new AngleCategoryCfg(2070, 115);
+        [JsonPropertyName("shortWall")] public AngleCategoryCfg ShortWall { get; set; } = new AngleCategoryCfg(3400, 50);
+
+        public AngleCategoryCfg Of(AngleCategory c)
+        {
+            switch (c)
+            {
+                case AngleCategory.LongCore: return LongCore;
+                case AngleCategory.LongWall: return LongWall;
+                case AngleCategory.ShortCore: return ShortCore;
+                default: return ShortWall;
+            }
+        }
+    }
+
+    /// <summary>Rejillas de foso: reparto, tipos, familia y angulos.</summary>
+    public class GridsCfg
+    {
+        /// <summary>"model" (modelar), "countOnly" (solo informe) u "off".</summary>
+        [JsonPropertyName("mode")] public string Mode { get; set; } = "model";
+        [JsonPropertyName("maxLengthMm")] public double MaxLengthMm { get; set; } = 825;
+        [JsonPropertyName("clearanceMm")] public double ClearanceMm { get; set; } = 5;
+        /// <summary>Lo que se resta al ancho del foso para el ancho de la pieza (mm).</summary>
+        [JsonPropertyName("widthReductionMm")] public double WidthReductionMm { get; set; } = 10;
+        [JsonPropertyName("types")] public List<GridTypeCfg> Types { get; set; } = new List<GridTypeCfg> { new GridTypeCfg() };
+        /// <summary>Tipo por defecto (nombre de la lista); cambiable bloque a bloque.</summary>
+        [JsonPropertyName("defaultType")] public string DefaultType { get; set; } = "Rejilla IG-01";
+        /// <summary>Familia Generic Model de la rejilla (Largo, Ancho, Espesor de instancia; Peso por m2 de tipo).</summary>
+        [JsonPropertyName("familyName")] public string FamilyName { get; set; } = "Rejilla ARBA";
+        /// <summary>Plantilla .rft para crear la familia; vacio = buscar "Generic Model" en la carpeta de plantillas de Revit.</summary>
+        [JsonPropertyName("familyTemplatePath")] public string FamilyTemplatePath { get; set; } = "";
+        [JsonPropertyName("angles")] public AnglesCfg Angles { get; set; } = new AnglesCfg();
+
+        public GridTypeCfg TypeNamed(string name)
+        {
+            if (Types == null || Types.Count == 0) return new GridTypeCfg();
+            string m = NameMatch.Unique(Types.Select(t => t.Name), name);
+            return m != null ? Types.First(t => t.Name == m) : Types[0];
+        }
+
+        public static string NormalizeMode(string m)
+        {
+            switch ((m ?? "").Trim().ToLowerInvariant())
+            {
+                case "countonly": case "count": case "informe": return "countOnly";
+                case "off": case "no": case "false": return "off";
+                default: return "model";
+            }
+        }
+    }
+
     /// <summary>
     /// Configuracion del add-in (config.json junto a la DLL). Los valores por defecto son los
     /// del plano IG-01-260275-104-0004-CV-DWG-0003 (fundaciones de transformadores, sala
@@ -231,6 +323,7 @@ namespace BlockRebar
         [JsonPropertyName("levelReference")] public string LevelReference { get; set; } = "shared";
         [JsonPropertyName("preview")] public PreviewCfg Preview { get; set; } = new PreviewCfg();
         [JsonPropertyName("sectionViews")] public SectionViewsCfg SectionViews { get; set; } = new SectionViewsCfg();
+        [JsonPropertyName("grids")] public GridsCfg Grids { get; set; } = new GridsCfg();
 
         // -----------------------------------------------------------------
         // Acceso uniforme por familia
@@ -298,6 +391,9 @@ namespace BlockRebar
             if (F8 == null) F8 = new WallHorizCfg();
             if (Preview == null) Preview = new PreviewCfg();
             if (SectionViews == null) SectionViews = new SectionViewsCfg();
+            if (Grids == null) Grids = new GridsCfg();
+            if (Grids.Angles == null) Grids.Angles = new AnglesCfg();
+            if (Grids.Types == null || Grids.Types.Count == 0) Grids.Types = new List<GridTypeCfg> { new GridTypeCfg() };
             if (F1.U == null) F1.U = new LayerCfg(); if (F1.V == null) F1.V = new LayerCfg();
             if (F2.U == null) F2.U = new LayerCfg(); if (F2.V == null) F2.V = new LayerCfg();
             if (F3.U == null) F3.U = new LayerCfg(); if (F3.V == null) F3.V = new LayerCfg();
@@ -350,6 +446,34 @@ namespace BlockRebar
             if (SectionViews.ViewTypeName == null) SectionViews.ViewTypeName = "";
             if (string.IsNullOrWhiteSpace(SectionViews.NameTemplate)) SectionViews.NameTemplate = "{marca} - Sección {letra}";
             if (SectionViews.TagFamilyName == null) SectionViews.TagFamilyName = "";
+
+            GridsCfg g = Grids;
+            g.Mode = GridsCfg.NormalizeMode(g.Mode);
+            if (g.MaxLengthMm <= 0) g.MaxLengthMm = 825;
+            if (g.ClearanceMm < 0) g.ClearanceMm = 0;
+            if (g.WidthReductionMm < 0) g.WidthReductionMm = 0;
+            foreach (GridTypeCfg t in g.Types)
+            {
+                if (string.IsNullOrWhiteSpace(t.Name)) t.Name = "Rejilla";
+                if (t.Designation == null) t.Designation = "";
+                if (t.HeightMm <= 0) t.HeightMm = 38;
+                if (t.KgPerM2 < 0) t.KgPerM2 = 0;
+            }
+            if (string.IsNullOrWhiteSpace(g.DefaultType) || NameMatch.Unique(g.Types.Select(t => t.Name), g.DefaultType) == null) g.DefaultType = g.Types[0].Name;
+            if (string.IsNullOrWhiteSpace(g.FamilyName)) g.FamilyName = "Rejilla ARBA";
+            if (g.FamilyTemplatePath == null) g.FamilyTemplatePath = "";
+            AnglesCfg a = g.Angles;
+            if (a.FamilyName == null) a.FamilyName = ""; if (a.TypeName == null) a.TypeName = "";
+            if (a.KgPerMDefault <= 0) a.KgPerMDefault = 6.10;
+            if (a.BoltsPerAngle < 0) a.BoltsPerAngle = 0;
+            if (a.LegMm <= 0) a.LegMm = 63.5;
+            if (a.CornerClearanceMm < 0) a.CornerClearanceMm = 0;
+            foreach (AngleCategoryCfg c in new[] { a.LongCore, a.LongWall, a.ShortCore, a.ShortWall })
+            {
+                c.Mode = (c.Mode ?? "").Trim().ToLowerInvariant() == "setback" ? "setback" : "fixedLength";
+                if (c.LengthMm <= 0) c.LengthMm = 1000;
+                if (c.SetbackMm < 0) c.SetbackMm = 0;
+            }
         }
 
         /// <summary>"long", "short", "x", "y" o "angle"; cualquier otra cosa es "long".</summary>

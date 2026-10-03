@@ -61,6 +61,8 @@ namespace BlockRebar.Tests
             CaseB();
             Console.WriteLine("== Casos extra ==");
             Extra();
+            Console.WriteLine("== Rejillas de foso y angulos (caso del plano) ==");
+            Grids();
             Console.WriteLine("== Config y particion ==");
             ConfigAndPartition();
             Console.WriteLine();
@@ -128,6 +130,122 @@ namespace BlockRebar.Tests
             }
             ins = Poly2D.InsetByEdge(ring[0], (ring0, i) => Mm(80), tol);
             Check(ins.Count == 0, "inset de 80 por cada lado vacia el murete de 150");
+        }
+
+        // =================================================================
+        // Rejillas y angulos
+        // =================================================================
+        private static void Grids()
+        {
+            BlockTopology t = PlanTopology();
+            AppConfig c = Cfg();
+            GridPlan g = GridPlan.Build(t, c.Grids, 6.10);
+            Console.WriteLine("  " + g.Describe());
+            foreach (string w in g.Warnings) Console.WriteLine("  aviso: " + w);
+            Check(g.Error == null, "reparto sin error");
+            Check(g.Strips.Count == 4, "4 franjas en el foso perimetral (" + g.Strips.Count + ")");
+            var p1 = g.Strips.Where(s => s.Group == "P1").ToList();
+            var p2 = g.Strips.Where(s => s.Group == "P2").ToList();
+            Check(p1.Count == 2 && p1.All(s => !s.AlongU && Math.Abs(ToMm(s.Length) - 3500) < 0.5), "P1: las dos franjas de los lados cortos con las esquinas, L = 3500");
+            Check(p2.Count == 2 && p2.All(s => s.AlongU && Math.Abs(ToMm(s.Length) - 3300) < 0.5), "P2: las dos franjas de los lados largos entre ellas, L = 3300");
+            Check(p1.All(s => s.Count == 5) && p1.Sum(s => s.Count) == 10, "10 piezas P1 (5 por franja)");
+            Check(p2.All(s => s.Count == 4) && p2.Sum(s => s.Count) == 8, "8 piezas P2 (4 por franja)");
+            Near(p1[0].PieceLength, 695, "pieza P1: largo"); Near(p1[0].PieceWidth, 590, "pieza P1: ancho");
+            Near(p2[0].PieceLength, 820, "pieza P2: largo"); Near(p2[0].PieceWidth, 590, "pieza P2: ancho");
+            double kgP1 = g.Pieces.Where(p => p.Group == "P1").Sum(p => p.Area) * 0.09290304 * 31.0;
+            double kgP2 = g.Pieces.Where(p => p.Group == "P2").Sum(p => p.Area) * 0.09290304 * 31.0;
+            Check(Math.Abs(kgP1 - 127.1) < 0.1, "P1: " + kgP1.ToString("0.0") + " kg (esperado 127.1)");
+            Check(kgP2 >= 119.9 && kgP2 <= 120.05, "P2: " + kgP2.ToString("0.0") + " kg (esperado 119.9-120.0)");
+            Check(g.Pieces.All(p => Math.Abs(p.ZTop - t.ZTop) < 1e-9), "rejillas al ras del tope");
+            // todas las piezas dentro del foso y sin solaparse
+            Recess rc = t.Recesses[0];
+            bool inside = g.Pieces.All(p => rc.Shape.Contains(new Pt(p.UMin + Mm(1), p.VMin + Mm(1))) && rc.Shape.Contains(new Pt(p.UMax - Mm(1), p.VMax - Mm(1))));
+            Check(inside, "todas las piezas dentro del foso");
+            bool overlap = false;
+            for (int i = 0; i < g.Pieces.Count && !overlap; i++)
+                for (int j = i + 1; j < g.Pieces.Count && !overlap; j++)
+                {
+                    GridPiece a = g.Pieces[i], b = g.Pieces[j];
+                    overlap = a.UMin < b.UMax - Mm(0.1) && b.UMin < a.UMax - Mm(0.1) && a.VMin < b.VMax - Mm(0.1) && b.VMin < a.VMax - Mm(0.1);
+                }
+            Check(!overlap, "ninguna pieza se solapa con otra");
+
+            // angulos: 8, centrados en su borde, 4 x 3050 + 2 x 2070 + 2 x 3400 = 23.14 m, 40 pernos
+            Check(g.Angles.Count == 8, "8 angulos (" + g.Angles.Count + ")");
+            var lens = g.Angles.Select(a => Math.Round(ToMm(a.Length))).OrderBy(x => x).ToList();
+            Check(lens.Count(x => x == 3050) == 4 && lens.Count(x => x == 2070) == 2 && lens.Count(x => x == 3400) == 2, "longitudes: " + string.Join(", ", lens));
+            Near(g.AngleLength, 23140, "longitud total de angulo = 23.14 m");
+            Check(g.Bolts == 40, "40 pernos (" + g.Bolts + ")");
+            Check(Math.Abs(g.AngleKg - 23.14 * 6.10) < 0.05, "peso de angulo " + g.AngleKg.ToString("0.0") + " kg (23.14 x 6.10)");
+            foreach (AngleBar a in g.Angles) Console.WriteLine("    " + a.Describe());
+            AngleBar lc = g.Angles.First(a => a.Category == AngleCategory.LongCore && a.Mid.V < Mm(1000));
+            Near(Math.Min(lc.A.U, lc.B.U), 875, "lado largo nucleo: empieza a 125 del borde de 3300 (u = 875)");
+            Near(lc.A.V, 750, "lado largo nucleo: sobre el borde del nucleo v = 750");
+            AngleBar lw = g.Angles.First(a => a.Category == AngleCategory.LongWall && a.Mid.V < Mm(1000));
+            Near(Math.Min(lw.A.U, lw.B.U), 875, "lado largo murete: centrado en el tramo de 3300 entre las franjas P1 (u = 875)");
+            Near(lw.A.V, 150, "lado largo murete: sobre la cara del murete v = 150");
+            AngleBar sc = g.Angles.First(a => a.Category == AngleCategory.ShortCore && a.Mid.U < Mm(1000));
+            Near(Math.Min(sc.A.V, sc.B.V), 865, "lado corto nucleo: retiro 115 (v = 865)");
+            Near(sc.A.U, 750, "lado corto nucleo: sobre el borde del nucleo u = 750");
+            AngleBar sw = g.Angles.First(a => a.Category == AngleCategory.ShortWall && a.Mid.U < Mm(1000));
+            Near(Math.Min(sw.A.V, sw.B.V), 200, "lado corto murete: retiro 50 (v = 200)");
+            Near(sw.A.U, 150, "lado corto murete: sobre la cara del murete u = 150");
+            Check(g.Angles.All(a => Geometry2D.Cross(a.Dir, a.Inward) > 0.99), "el foso queda a la izquierda de cada angulo (Inward = Left(dir))");
+            Check(g.Warnings.Count == 0, "sin avisos en el caso del plano");
+            Console.WriteLine(g.QuantityTable());
+
+            // rejillas y angulos en las secciones: A-A por el centro cruza las franjas P1 y los 4 angulos de los lados cortos
+            SectionCut ca = BlockSection.Cut(null, t, new SectionLine(true, Mm(1900)), Mm(2));
+            BlockSection.AddGrids(ca, g, Mm(63.5));
+            Check(ca.Grids.Count == 2 && ca.Grids.All(x => x.Group == "P1" && !x.Lengthwise), "A-A: 2 piezas P1 cruzadas (" + ca.Grids.Count + ")");
+            Near(ca.Grids[0].S1 - ca.Grids[0].S0, 590, "A-A: ancho visto de la pieza P1");
+            Near(ca.Grids[0].Z1 - ca.Grids[0].Z0, 38, "A-A: alto de la rejilla");
+            Check(ca.Angles.Count == 4 && ca.Angles.All(x => x.Crossing), "A-A: 4 angulos cortados (" + ca.Angles.Count + ")");
+            SectionAngle first = ca.Angles.OrderBy(x => x.S).First();
+            Near(first.S, 150, "A-A: primer angulo cortado en la cara del murete s = 150");
+            Check(first.Toward == 1, "A-A: su ala horizontal mira hacia el foso (+s)");
+            SectionCut cb = BlockSection.Cut(null, t, new SectionLine(false, Mm(2000)), Mm(2));
+            BlockSection.AddGrids(cb, g, Mm(63.5));
+            Check(cb.Grids.Count == 2 && cb.Grids.All(x => x.Group == "P2" && !x.Lengthwise), "B-B: 2 piezas P2 cruzadas (" + cb.Grids.Count + ")");
+            Check(cb.Angles.Count == 4 && cb.Angles.All(x => x.Crossing), "B-B: 4 angulos cortados (" + cb.Angles.Count + ")");
+            SectionCut cp = BlockSection.Cut(null, t, new SectionLine(true, Mm(450)), Mm(2));
+            BlockSection.AddGrids(cp, g, Mm(63.5));
+            Check(cp.Grids.Count(x => x.Group == "P2" && x.Lengthwise) == 4 && cp.Grids.Count(x => x.Group == "P1") == 2, "A-A por la franja P2 (v = 450): 4 piezas P2 a lo largo y 2 P1 cruzadas");
+
+            // otra geometria: borde mas corto que la longitud fija -> retiro equivalente y aviso
+            var c2 = Cfg();
+            BlockTopology tb = BlockTopology.Build(new[] { Box(0, 0, 3000, 2500) }, new[] { Box(0, 0, 3000, 2500), Box(900, 700, 2100, 1800) },
+                new[] { (new List<List<Pt>> { Box(900, 700, 2100, 1800) }, Mm(400)) }, Mm(1000), Mm(300), Mm(2));
+            GridPlan g2 = GridPlan.Build(tb, c2.Grids, 6.10);
+            Console.WriteLine("  foso central 1200 x 1100: " + g2.Describe());
+            foreach (string w in g2.Warnings) Console.WriteLine("  aviso: " + w);
+            Check(g2.Error == null && g2.Strips.Count == 1 && g2.Strips[0].AlongU, "foso rectangular: una franja segun u");
+            Check(g2.Angles.Count == 2 && g2.Angles.All(a => a.Category == AngleCategory.LongCore), "dos angulos de borde de nucleo en el lado largo");
+            Near(g2.Angles[0].Length, 1200 - 2 * 125, "no cabe 3050: retiro 125 -> 950");
+            Check(g2.Warnings.Any(w => w.Contains("no cabe")), "aviso de que no cabe la longitud fija");
+            Check(g2.Strips[0].Count == 2 && Math.Abs(ToMm(g2.Strips[0].PieceLength) - 595) < 0.5 && Math.Abs(ToMm(g2.Strips[0].PieceWidth) - 1090) < 0.5, "2 piezas de 595 x 1090");
+
+            // esquina: dos angulos con retiro 0 se tocarian -> recorte con holgura
+            var c3 = Cfg();
+            foreach (AngleCategoryCfg cc in new[] { c3.Grids.Angles.LongCore, c3.Grids.Angles.ShortCore, c3.Grids.Angles.LongWall, c3.Grids.Angles.ShortWall }) { cc.Mode = "setback"; cc.SetbackMm = 0; }
+            var ell = new List<Pt> { new Pt(Mm(500), Mm(500)), new Pt(Mm(3500), Mm(500)), new Pt(Mm(3500), Mm(1100)), new Pt(Mm(1100), Mm(1100)), new Pt(Mm(1100), Mm(2500)), new Pt(Mm(500), Mm(2500)) };
+            // el tope: plataforma con la L del foso como hueco
+            BlockTopology tL = BlockTopology.Build(new[] { Box(0, 0, 4000, 3000) }, new[] { Box(0, 0, 4000, 3000), ell },
+                new[] { (new List<List<Pt>> { ell }, Mm(400)) }, Mm(1000), Mm(300), Mm(2));
+            GridPlan g3 = GridPlan.Build(tL, c3.Grids, 6.10);
+            Console.WriteLine("  canaleta en L: " + g3.Describe());
+            foreach (string w in g3.Warnings) Console.WriteLine("  aviso: " + w);
+            Check(g3.Error == null && g3.Strips.Count == 2, "canaleta en L: dos franjas (" + g3.Strips.Count + ")");
+            double minDist = double.MaxValue;
+            for (int i = 0; i < g3.Angles.Count; i++)
+                for (int j = 0; j < g3.Angles.Count; j++)
+                {
+                    if (i == j) continue;
+                    minDist = Math.Min(minDist, Math.Min(Geometry2D.DistanceToSegment(g3.Angles[i].A, g3.Angles[j].A, g3.Angles[j].B, out _),
+                                                         Geometry2D.DistanceToSegment(g3.Angles[i].B, g3.Angles[j].A, g3.Angles[j].B, out _)));
+                }
+            Check(g3.Angles.Count >= 2 && ToMm(minDist) >= 9.9, "ningun angulo a menos de 10 mm de otro (min " + ToMm(minDist) + " mm)");
+            Check(g3.Warnings.Any(w => w.Contains("esquina")) || ToMm(minDist) > 10.5, "aviso de recorte en esquina si se tocaban");
         }
 
         // =================================================================

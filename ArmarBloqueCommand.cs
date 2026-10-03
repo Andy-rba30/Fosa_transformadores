@@ -53,6 +53,8 @@ namespace BlockRebar
             Log.Write("tipos de barra: " + (barTypes.Count == 0 ? "ninguno" : string.Join(", ", barTypes.Select(b => b.Display))));
             List<SectionViews.TagType> tagTypes = SectionViews.ReadTagTypes(doc);
             Log.Write("etiquetas de armadura: " + (tagTypes.Count == 0 ? "ninguna" : string.Join(", ", tagTypes.Select(t => t.Display))));
+            List<GridGenerator.AngleSymbolInfo> angleSymbols = GridGenerator.ReadAngleSymbols(doc, cfg.Grids.Angles.KgPerMDefault);
+            Log.Write("tipos de Structural Framing: " + (angleSymbols.Count == 0 ? "ninguno" : string.Join(", ", angleSymbols.Select(a => a.Display + " (" + a.KgPerM.ToString("0.00", CultureInfo.InvariantCulture) + " kg/m)"))));
 
             // --- 1. Analisis geometrico de cada elemento (solo lectura, sin transaccion) ---
             var items = new List<HostAnalysis>();
@@ -61,32 +63,66 @@ namespace BlockRebar
                 HostAnalysis a = HostAnalysis.Analyze(doc, h, cfg);
                 a.PluginRebars = RebarGenerator.FindPluginRebars(doc, h);
                 if (a.PluginRebars.Count > 0) a.Diagnostics.Add("ya tiene " + a.PluginRebars.Count + " conjunto(s) de armadura creados por el plugin");
+                a.PluginGridItems = GridGenerator.FindPluginItems(doc, h);
+                if (a.PluginGridItems.Count > 0) a.Diagnostics.Add("ya tiene " + a.PluginGridItems.Count + " angulo(s)/rejilla(s) colocados por el plugin");
                 items.Add(a);
                 Log.Block(a.Tag.Trim(), string.Join(Environment.NewLine, a.Diagnostics));
             }
 
             // --- 2. Lamina: el usuario revisa lo detectado y elige el armado ---
             Func<string, double> offset = r => BlockOutline.ElevationOffset(doc, r);
-            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, items, offset, tagTypes);
-            try { new WindowInteropHelper(win).Owner = commandData.Application.MainWindowHandle; } catch { }
-            bool? ok;
-            try { ok = win.ShowDialog(); }
-            catch (Exception ex)
+            RebarOptionsWindow win;
+            AppConfig winCfg = cfg.Clone();
+            while (true)
             {
-                Log.Error("RebarOptionsWindow", ex);
-                message = "Error en la ventana: " + ex.Message + Environment.NewLine + "Detalle en " + Log.Path;
-                return Result.Failed;
-            }
-            if (ok != true) return Result.Cancelled;
+                Autodesk.Revit.DB.Family gridFamily = GridGenerator.FindGridFamily(doc, winCfg.Grids.FamilyName);
+                var gfs = new GridFamilyStatus { Loaded = gridFamily != null, Name = gridFamily?.Name ?? winCfg.Grids.FamilyName, Types = GridGenerator.GridSymbols(doc, gridFamily).Select(x => x.Name).ToList() };
+                win = new RebarOptionsWindow(winCfg, barTypes, items, offset, tagTypes, angleSymbols, gfs);
+                try { new WindowInteropHelper(win).Owner = commandData.Application.MainWindowHandle; } catch { }
+                bool? ok;
+                try { ok = win.ShowDialog(); }
+                catch (Exception ex)
+                {
+                    Log.Error("RebarOptionsWindow", ex);
+                    message = "Error en la ventana: " + ex.Message + Environment.NewLine + "Detalle en " + Log.Path;
+                    return Result.Failed;
+                }
+                if (ok != true) return Result.Cancelled;
+                if (!win.CreateGridFamilyRequested) break;
 
-            // --- 3a. Borrar el armado del plugin ---
+                // --- 2b. Crear y cargar la familia de rejilla; la ventana se vuelve a abrir ---
+                winCfg = win.Result ?? winCfg;
+                var notes = new List<string>();
+                using (Transaction tx = new Transaction(doc, "Crear familia de rejilla"))
+                {
+                    tx.Start();
+                    try
+                    {
+                        Autodesk.Revit.DB.Family fam = GridGenerator.CreateGridFamily(commandData.Application.Application, doc, winCfg.Grids, notes);
+                        tx.Commit();
+                        Log.Block("Crear familia de rejilla", string.Join(Environment.NewLine, notes));
+                        TaskDialog.Show("Familia de rejilla", "Familia \"" + fam.Name + "\" creada y cargada." + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, notes));
+                    }
+                    catch (Exception ex)
+                    {
+                        tx.RollBack();
+                        Log.Error("CreateGridFamily", ex);
+                        TaskDialog.Show("Familia de rejilla", "No se pudo crear la familia: " + ex.Message + Environment.NewLine + string.Join(Environment.NewLine, notes) + Environment.NewLine + "log: " + Log.Path);
+                    }
+                }
+            }
+
+            // --- 3a. Borrar el armado / las rejillas del plugin ---
             if (win.DeleteRequested) return DeletePluginRebars(doc, items, commandData);
+            if (win.DeleteGridsRequested) return DeletePluginGrids(doc, items, commandData);
 
             if (win.Result == null) return Result.Cancelled;
             cfg = win.Result;
 
             // --- 3b. Solo vistas de seccion (sin armar) ---
             if (win.ViewsOnlyRequested) return CreateViewsOnly(doc, items, cfg, win, tagTypes, commandData);
+            // --- 3b'. Rejillas y angulos (sin armar) ---
+            if (win.GridsRequested) return PlaceGrids(doc, items, cfg, angleSymbols, commandData);
 
             // --- 3c. Elementos que ya tienen barras del plugin: borrar antes de rearmar o conservar ---
             var withExisting = items.Where(i => i.Outline != null && i.PluginRebars.Count > 0).ToList();
@@ -236,6 +272,124 @@ namespace BlockRebar
                             "---- DETALLE ----" + Environment.NewLine + detail + "log: " + Log.Path;
             Log.Block("Armar bloques con foso", report);
             ShowReport(commandData, "Armado de bloques con foso", report);
+            return Result.Succeeded;
+        }
+
+        private static Result PlaceGrids(Document doc, List<HostAnalysis> items, AppConfig cfg, List<GridGenerator.AngleSymbolInfo> angleSymbols, ExternalCommandData commandData)
+        {
+            GridsCfg g = cfg.Grids;
+            List<GridGenerator.AngleSymbolInfo> cands = GridGenerator.Candidates(angleSymbols, g.Angles.FamilyName, g.Angles.TypeName);
+            GridGenerator.AngleSymbolInfo angle = cands.Count == 1 ? cands[0] : null;
+            Autodesk.Revit.DB.Family gridFamily = GridGenerator.FindGridFamily(doc, g.FamilyName);
+            var targets = items.Where(i => i.Outline != null).ToList();
+            var withExisting = targets.Where(i => i.PluginGridItems.Count > 0).ToList();
+            bool deleteFirst = false;
+            if (withExisting.Count > 0)
+            {
+                var td = new TaskDialog("Rejillas y angulos")
+                {
+                    MainInstruction = withExisting.Count + " elemento(s) ya tienen rejillas o angulos colocados por este plugin.",
+                    MainContent = string.Join(Environment.NewLine, withExisting.Select(i => i.Tag.Trim() + " " + i.PluginGridItems.Count + " elemento(s)")) +
+                                  Environment.NewLine + Environment.NewLine + "Para no duplicar, lo normal es borrarlos antes de recolocar.",
+                    AllowCancellation = true,
+                    CommonButtons = TaskDialogCommonButtons.Cancel
+                };
+                td.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Borrar los del plugin y recolocar", "Dentro de la misma subtransaccion: si la colocacion falla, los anteriores se conservan.");
+                td.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Conservar y anadir", "Quedaran duplicados.");
+                TaskDialogResult r = td.Show();
+                if (r == TaskDialogResult.CommandLink1) deleteFirst = true;
+                else if (r != TaskDialogResult.CommandLink2) return Result.Cancelled;
+            }
+
+            var log = new List<string>();
+            var detail = new StringBuilder();
+            int placedAngles = 0, placedGrids = 0, done = 0, rejected = 0;
+            using (Transaction tx = new Transaction(doc, "Colocar rejillas y angulos de foso"))
+            {
+                tx.Start();
+                foreach (HostAnalysis item in items)
+                {
+                    string tag = item.Tag;
+                    if (item.Outline == null) { rejected++; log.Add(tag + "SIN REJILLAS -> " + item.Error); continue; }
+                    using (SubTransaction sub = new SubTransaction(doc))
+                    {
+                        sub.Start();
+                        GridGenerator.PlaceResult res = null;
+                        GridPlan plan = null;
+                        string error = null;
+                        int deleted = 0;
+                        try
+                        {
+                            BlockTopology t = item.Frame(cfg)?.Topology;
+                            if (t == null || t.Error != null) throw new InvalidOperationException(t?.Error ?? "sin geometria legible");
+                            plan = GridPlan.Build(t, g, angle?.KgPerM ?? g.Angles.KgPerMDefault, item.GridTypeOverride);
+                            if (plan.Error != null) throw new InvalidOperationException(plan.Error);
+                            if (deleteFirst && item.PluginGridItems.Count > 0) deleted = GridGenerator.DeletePluginItems(doc, item.Host, out _, out _);
+                            res = GridGenerator.Place(doc, item, cfg, plan, angle, gridFamily);
+                        }
+                        catch (Exception ex) { error = ex.Message; Log.Error("PlaceGrids " + tag, ex); }
+
+                        bool keep = error == null && res != null && (res.Angles.Count + res.Grids.Count > 0 || (g.Mode == "countOnly" && !g.Angles.Enabled));
+                        if (keep)
+                        {
+                            sub.Commit();
+                            done++; placedAngles += res.Angles.Count; placedGrids += res.Grids.Count;
+                            log.Add(tag + res.Summary + (deleted > 0 ? " (borrados antes " + deleted + " del plugin)" : "") + (res.Failed.Count > 0 ? "  INCOMPLETO: " + res.Failed.Count + " no colocados" : "") +
+                                    (res.Warnings.Count > 0 ? "  AVISOS: " + string.Join(" | ", res.Warnings) : ""));
+                            detail.AppendLine("== " + tag.Trim() + " ==");
+                            detail.AppendLine(plan.Describe());
+                            foreach (GridStrip st in plan.Strips) detail.AppendLine(st.Describe());
+                            detail.AppendLine(plan.QuantityTable());
+                            foreach (string l in res.Lines) detail.AppendLine(l);
+                            foreach (string w in plan.Warnings) detail.AppendLine("aviso (reparto): " + w);
+                            foreach (string w in res.Warnings) detail.AppendLine("aviso: " + w);
+                            foreach (string f in res.Failed) detail.AppendLine("NO COLOCADO: " + f);
+                            detail.AppendLine();
+                        }
+                        else
+                        {
+                            sub.RollBack();
+                            rejected++;
+                            string why = error ?? (res != null && res.Failed.Count > 0 ? "no se pudo colocar nada: " + string.Join(" | ", res.Failed) : "nada que colocar" + (res != null && res.Warnings.Count > 0 ? " (" + string.Join(" | ", res.Warnings) + ")" : ""));
+                            log.Add(tag + "SIN REJILLAS -> " + why + ". Se ha deshecho todo lo de este elemento.");
+                            detail.AppendLine("== " + tag.Trim() + " ==  SIN REJILLAS");
+                            detail.AppendLine(why);
+                            if (plan != null && plan.Error == null) detail.AppendLine(plan.QuantityTable());
+                            detail.AppendLine();
+                        }
+                    }
+                }
+                tx.Commit();
+            }
+            string head = placedAngles + " angulo(s) y " + placedGrids + " rejilla(s) colocados en " + done + " de " + items.Count + " elemento(s)." +
+                          (rejected > 0 ? Environment.NewLine + "ATENCION: " + rejected + " elemento(s) sin rejillas (ver detalle)." : "") +
+                          (angle == null && g.Angles.Enabled ? Environment.NewLine + "Sin tipo de angulo cargado o ambiguo: no se han colocado angulos (solo se cuentan en el metrado)." : "") +
+                          (gridFamily == null && g.Mode == "model" ? Environment.NewLine + "Familia de rejilla no cargada: las rejillas solo se cuentan." : "");
+            string report = head + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, log) + Environment.NewLine + Environment.NewLine +
+                            "---- DETALLE ----" + Environment.NewLine + detail + "log: " + Log.Path;
+            Log.Block("Colocar rejillas y angulos", report);
+            ShowReport(commandData, "Rejillas y angulos de foso", report);
+            return Result.Succeeded;
+        }
+
+        private static Result DeletePluginGrids(Document doc, List<HostAnalysis> items, ExternalCommandData commandData)
+        {
+            var lines = new List<string>();
+            int angles = 0, grids = 0, elems = 0;
+            using (Transaction tx = new Transaction(doc, "Borrar rejillas y angulos del plugin"))
+            {
+                tx.Start();
+                foreach (HostAnalysis item in items)
+                {
+                    int n = GridGenerator.DeletePluginItems(doc, item.Host, out int a, out int gr);
+                    if (n > 0) { elems++; angles += a; grids += gr; }
+                    lines.Add(item.Tag + (n > 0 ? a + " angulo(s) y " + gr + " rejilla(s) del plugin borrados" : "sin rejillas ni angulos del plugin"));
+                }
+                tx.Commit();
+            }
+            string report = angles + " angulo(s) y " + grids + " rejilla(s) del plugin borrados en " + elems + " elemento(s). La armadura no se toca." + Environment.NewLine + string.Join(Environment.NewLine, lines);
+            Log.Block("Borrar rejillas y angulos del plugin", report);
+            TaskDialog.Show("Borrar rejillas y angulos", report);
             return Result.Succeeded;
         }
 

@@ -24,6 +24,7 @@
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
     <Compile Include="..\PartitionName.cs" Link="PartitionName.cs" />
     <Compile Include="..\NameMatch.cs" Link="NameMatch.cs" />
+    <Compile Include="..\GridPlan.cs" Link="GridPlan.cs" />
   </ItemGroup>
 
 </Project>

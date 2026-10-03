@@ -25,7 +25,28 @@ namespace BlockRebar
         private readonly IList<BarTypes.Info> _barTypes;
         private readonly IList<HostAnalysis> _items;
         private readonly IList<SectionViews.TagType> _tagTypes;
+        private readonly IList<GridGenerator.AngleSymbolInfo> _angleSymbols;
+        private readonly GridFamilyStatus _gridFamily;
         private readonly Func<string, double> _elevationOffset;
+        /// <summary>True si se pulso "Colocar rejillas y angulos" (sin armar).</summary>
+        public bool GridsRequested { get; private set; }
+        /// <summary>True si se pulso "Crear familia de rejilla": el comando la crea, la carga y vuelve a abrir la ventana.</summary>
+        public bool CreateGridFamilyRequested { get; private set; }
+        /// <summary>True si se pulso "Borrar rejillas y angulos del plugin".</summary>
+        public bool DeleteGridsRequested { get; private set; }
+        // rejillas y angulos
+        private ComboBox _gMode, _gDefaultType, _gAngleType;
+        private TextBox _gMaxLen, _gClear, _gRed, _gKgDefault, _gBolts, _gLeg, _gRot, _gCorner, _gFamilyName;
+        private CheckBox _gAnglesOn;
+        private ListBox _gTypes;
+        private TextBox _gtName, _gtDesig, _gtHeight, _gtKg;
+        private List<GridTypeCfg> _gridTypes = new List<GridTypeCfg>();
+        private readonly Dictionary<AngleCategory, (ComboBox mode, TextBox len, TextBox setback)> _gCats = new Dictionary<AngleCategory, (ComboBox, TextBox, TextBox)>();
+        private TextBlock _gFamilyStatus, _gAngleStatus;
+        private Button _createFamilyButton, _gridsButton, _deleteGridsButton;
+        private readonly Dictionary<HostAnalysis, ComboBox> _gridTypeCombos = new Dictionary<HostAnalysis, ComboBox>();
+        private GridPlan _lastGrid;
+        private CheckBox _showGrids, _showAngles;
         /// <summary>True si el usuario pulso "Crear solo las vistas de seccion" (sin armar).</summary>
         public bool ViewsOnlyRequested { get; private set; }
         /// <summary>Posicion de los cortes A y B de cada bloque (pies, locales), tal y como quedaron en la lamina.</summary>
@@ -85,12 +106,15 @@ namespace BlockRebar
         private static readonly Brush SelectedBrush = RevitTheme.Selection;
 
         public RebarOptionsWindow(AppConfig cfg, IList<BarTypes.Info> barTypes, IList<HostAnalysis> items, Func<string, double> elevationOffset,
-                                  IList<SectionViews.TagType> tagTypes = null)
+                                  IList<SectionViews.TagType> tagTypes = null, IList<GridGenerator.AngleSymbolInfo> angleSymbols = null, GridFamilyStatus gridFamily = null)
         {
             _cfg = cfg;
             _cfg.Normalize();
             _barTypes = barTypes ?? new List<BarTypes.Info>();
             _tagTypes = tagTypes ?? new List<SectionViews.TagType>();
+            _angleSymbols = angleSymbols ?? new List<GridGenerator.AngleSymbolInfo>();
+            _gridFamily = gridFamily ?? new GridFamilyStatus { Name = _cfg.Grids.FamilyName };
+            _gridTypes = _cfg.Grids.Types.Select(t => t.Copy()).ToList();
             _items = items;
             _elevationOffset = elevationOffset ?? (r => 0);
 
@@ -157,6 +181,7 @@ namespace BlockRebar
             left.Children.Add(BuildF8());
             left.Children.Add(BuildGeneral());
             left.Children.Add(BuildSectionViews());
+            left.Children.Add(BuildGrids());
             var scroll = new ScrollViewer
             {
                 Content = left, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -216,6 +241,12 @@ namespace BlockRebar
                     dir.SelectedIndex = di >= 0 && di < 4 ? di + 1 : 0;
                     dir.SelectionChanged += (s, e) => { captured.DirectionOverride = dir.SelectedIndex <= 0 ? "" : DirModes[dir.SelectedIndex - 1]; Refresh(); };
                     side.Children.Add(dir);
+                    side.Children.Add(new TextBlock { Text = "Rejilla:", Margin = new Thickness(8, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center });
+                    var gt = new ComboBox { Width = 130, ToolTip = "Tipo de rejilla de este bloque (por defecto = el elegido en el panel de rejillas)." };
+                    FillGridTypeCombo(gt, item.GridTypeOverride, true);
+                    gt.SelectionChanged += (s, e) => { captured.GridTypeOverride = gt.SelectedIndex <= 0 ? "" : (gt.SelectedItem as string ?? ""); Refresh(); };
+                    _gridTypeCombos[item] = gt;
+                    side.Children.Add(gt);
                     Grid.SetColumn(side, 1);
                     row.Children.Add(side);
                 }
@@ -442,6 +473,182 @@ namespace BlockRebar
             return group;
         }
 
+        /// <summary>Rellena un desplegable con los tipos de rejilla de la lista de trabajo (opcionalmente con "(por defecto)" al principio).</summary>
+        private void FillGridTypeCombo(ComboBox cb, string current, bool withDefault)
+        {
+            string keep = cb.SelectedItem as string ?? current ?? "";
+            cb.Items.Clear();
+            if (withDefault) cb.Items.Add("(por defecto)");
+            foreach (GridTypeCfg t in _gridTypes) cb.Items.Add(t.Name);
+            string m = NameMatch.Unique(_gridTypes.Select(t => t.Name), keep);
+            cb.SelectedIndex = m == null ? 0 : cb.Items.IndexOf(m);
+            if (cb.SelectedIndex < 0) cb.SelectedIndex = 0;
+        }
+
+        private UIElement BuildGrids()
+        {
+            GridsCfg g = _cfg.Grids;
+            AnglesCfg an = g.Angles;
+            var group = new GroupBox { Header = "Rejillas de foso y angulos de borde (fase 3)", Padding = new Thickness(4) };
+            var grid = FormGrid();
+            int r = 0;
+
+            // rejillas: modo y reparto
+            var mode = new StackPanel { Orientation = Orientation.Horizontal };
+            _gMode = Choice("G:mode", new[] { "model", "countOnly", "off" }, new[] { "modelar", "solo informe", "desactivado" }, g.Mode, 110);
+            mode.Children.Add(_gMode);
+            mode.Children.Add(new TextBlock { Text = "largo max.:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gMaxLen = Num("G:maxLen", g.MaxLengthMm); mode.Children.Add(_gMaxLen);
+            mode.Children.Add(new TextBlock { Text = "holgura:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gClear = Num("G:clear", g.ClearanceMm); mode.Children.Add(_gClear);
+            AddRow(grid, r++, "Rejillas:", mode, "Modelar las rejillas (Generic Model), solo contarlas en el informe, o nada. Reparto por franja: n = techo(L / largo max.), pieza = L / n - holgura.");
+            var red = new StackPanel { Orientation = Orientation.Horizontal };
+            _gRed = Num("G:red", g.WidthReductionMm); red.Children.Add(_gRed);
+            red.Children.Add(new TextBlock { Text = "menos que el ancho del foso (mm)", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            AddRow(grid, r++, "Ancho de pieza:", red, "Ancho de la pieza = ancho de la franja del foso menos este valor (10 mm en el plano).");
+
+            // tipos de rejilla: lista editable
+            var types = new Grid();
+            types.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
+            types.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            _gTypes = new ListBox { Height = 74, Margin = Pad };
+            foreach (GridTypeCfg t in _gridTypes) _gTypes.Items.Add(t.Name);
+            _gTypes.SelectionChanged += (s, e) => LoadGridTypeFields();
+            Grid.SetColumn(_gTypes, 0);
+            types.Children.Add(_gTypes);
+            var fields = new StackPanel();
+            var f1 = new StackPanel { Orientation = Orientation.Horizontal };
+            f1.Children.Add(new TextBlock { Text = "nombre:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
+            _gtName = new TextBox { Width = 150, Margin = Pad }; f1.Children.Add(_gtName);
+            f1.Children.Add(new TextBlock { Text = "designacion:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gtDesig = new TextBox { Width = 80, Margin = Pad }; f1.Children.Add(_gtDesig);
+            fields.Children.Add(f1);
+            var f2 = new StackPanel { Orientation = Orientation.Horizontal };
+            f2.Children.Add(new TextBlock { Text = "alto (mm):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
+            _gtHeight = NumBox(38); f2.Children.Add(_gtHeight);
+            f2.Children.Add(new TextBlock { Text = "peso (kg/m2):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gtKg = NumBox(31); f2.Children.Add(_gtKg);
+            fields.Children.Add(f2);
+            var f3 = new StackPanel { Orientation = Orientation.Horizontal };
+            var add = new Button { Content = "Anadir", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+            add.Click += (s, e) => { if (ReadGridTypeFields(out GridTypeCfg t, out string err)) { if (_gridTypes.Any(x => x.Name == t.Name)) { Message(err = "ya hay un tipo \"" + t.Name + "\""); return; } _gridTypes.Add(t); _gTypes.Items.Add(t.Name); _gTypes.SelectedIndex = _gTypes.Items.Count - 1; RefreshGridTypeCombos(); Refresh(); } else Message(err); };
+            var save = new Button { Content = "Guardar cambios", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+            save.Click += (s, e) =>
+            {
+                int i = _gTypes.SelectedIndex;
+                if (i < 0) { Message("elige un tipo de la lista"); return; }
+                if (!ReadGridTypeFields(out GridTypeCfg t, out string err)) { Message(err); return; }
+                if (_gridTypes.Any((x) => x.Name == t.Name && !ReferenceEquals(x, _gridTypes[i]))) { Message("ya hay otro tipo \"" + t.Name + "\""); return; }
+                _gridTypes[i] = t; _gTypes.Items[i] = t.Name; RefreshGridTypeCombos(); Refresh();
+            };
+            var del = new Button { Content = "Borrar", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+            del.Click += (s, e) =>
+            {
+                int i = _gTypes.SelectedIndex;
+                if (i < 0) return;
+                if (_gridTypes.Count <= 1) { Message("tiene que quedar al menos un tipo"); return; }
+                _gridTypes.RemoveAt(i); _gTypes.Items.RemoveAt(i); _gTypes.SelectedIndex = Math.Min(i, _gTypes.Items.Count - 1); RefreshGridTypeCombos(); Refresh();
+            };
+            f3.Children.Add(add); f3.Children.Add(save); f3.Children.Add(del);
+            fields.Children.Add(f3);
+            Grid.SetColumn(fields, 1);
+            types.Children.Add(fields);
+            AddRow(grid, r++, "Tipos de rejilla:", types, "Lista de tipos de rejilla (= tipos de la familia Generic Model): nombre, designacion, alto y peso por m2. El peso por defecto 31.0 kg/m2 sale del cuadro de parrillas del plano (P1 254.2 kg / 20, P2 239.7 kg / 16).");
+            if (_gTypes.Items.Count > 0) _gTypes.SelectedIndex = 0;
+
+            _gDefaultType = new ComboBox { Margin = Pad, Width = 200 };
+            FillGridTypeCombo(_gDefaultType, g.DefaultType, false);
+            Hook(_gDefaultType);
+            AddRow(grid, r++, "Tipo por defecto:", _gDefaultType, "Tipo de rejilla de los bloques sin tipo propio (se elige por bloque en la lista de arriba).");
+
+            // familia de rejilla
+            var fam = new StackPanel { Orientation = Orientation.Horizontal };
+            _gFamilyName = new TextBox { Text = g.FamilyName, Width = 150, Margin = Pad }; Hook(_gFamilyName);
+            fam.Children.Add(_gFamilyName);
+            _gFamilyStatus = new TextBlock { Margin = Pad, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 180 };
+            fam.Children.Add(_gFamilyStatus);
+            _createFamilyButton = new Button { Content = "Crear familia de rejilla", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+            _createFamilyButton.ToolTip = "Genera la familia Generic Model desde la plantilla de Revit (extrusion con Largo, Ancho y Espesor de instancia, Peso por m2 de tipo, Peso = Largo x Ancho x Peso por m2, material Rejilla con patron de lineas cada 30 mm), la guarda junto a la DLL y la carga en el proyecto. La ventana se vuelve a abrir despues.";
+            _createFamilyButton.Click += (s, e) =>
+            {
+                AppConfig c = ReadConfig(out string err);
+                if (err != null) { Message(err); return; }
+                Result = c; CreateGridFamilyRequested = true; DialogResult = true; Close();
+            };
+            fam.Children.Add(_createFamilyButton);
+            AddRow(grid, r++, "Familia:", fam, "Familia Generic Model de la rejilla (Largo, Ancho, Espesor de instancia). Si no esta cargada, el boton la crea.");
+
+            // angulos
+            var ang = new StackPanel { Orientation = Orientation.Horizontal };
+            _gAnglesOn = new CheckBox { Content = "Colocar", IsChecked = an.Enabled, Margin = Pad, VerticalAlignment = VerticalAlignment.Center }; Hook(_gAnglesOn);
+            ang.Children.Add(_gAnglesOn);
+            _gAngleType = new ComboBox { Width = 230, Margin = Pad };
+            foreach (GridGenerator.AngleSymbolInfo a in _angleSymbols) _gAngleType.Items.Add(a.Display);
+            List<GridGenerator.AngleSymbolInfo> cands = GridGenerator.Candidates(_angleSymbols, an.FamilyName, an.TypeName);
+            _gAngleType.SelectedIndex = cands.Count == 1 ? _angleSymbols.IndexOf(cands[0]) : -1;
+            Hook(_gAngleType);
+            ang.Children.Add(_gAngleType);
+            AddRow(grid, r++, "Angulos:", ang, "Tipo de Structural Framing del angulo de borde (familia \"L-Angle\", tipo \"L2-1/2X2-1/2X1/4\" por defecto). Regla de nombres de los tipos de barra: exacto; fragmento unico; ambiguo en amarillo. Si no esta cargado no se colocan angulos y se avisa.");
+            _gAngleStatus = new TextBlock { Foreground = RevitTheme.Muted, Margin = Pad, TextWrapping = TextWrapping.Wrap };
+            AddRow(grid, r++, "", _gAngleStatus, null);
+            var ap = new StackPanel { Orientation = Orientation.Horizontal };
+            _gKgDefault = Num("G:kg", an.KgPerMDefault); ap.Children.Add(_gKgDefault);
+            ap.Children.Add(new TextBlock { Text = "kg/m si no se lee W; pernos/angulo:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gBolts = Num("G:bolts", an.BoltsPerAngle); ap.Children.Add(_gBolts);
+            AddRow(grid, r++, "Peso y pernos:", ap, "Peso lineal por defecto (catalogo: W = 4.10 lb/ft = 6.10 kg/m) cuando el tipo no tiene un parametro W legible, y pernos de expansion de 1/2\" por angulo (solo se cuentan).");
+            var ag = new StackPanel { Orientation = Orientation.Horizontal };
+            _gLeg = Num("G:leg", an.LegMm); ag.Children.Add(_gLeg);
+            ag.Children.Add(new TextBlock { Text = "ala (mm), giro (grados):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gRot = Num("G:rot", an.RotationDeg); ag.Children.Add(_gRot);
+            ag.Children.Add(new TextBlock { Text = "holgura esquina:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _gCorner = Num("G:corner", an.CornerClearanceMm); ag.Children.Add(_gCorner);
+            AddRow(grid, r++, "Seccion:", ag, "Ala del angulo (el eje de la viga va a media ala del borde y del tope), giro de la seccion para orientar las alas (el foso queda siempre a la izquierda de la viga) y holgura entre angulos que se tocarian en una esquina.");
+            foreach (AngleCategory c in AngleCategories.All)
+            {
+                AngleCategoryCfg cc = an.Of(c);
+                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                ComboBox m = Choice("G:" + c + ":mode", new[] { "fixedLength", "setback" }, new[] { "longitud fija", "retiro" }, cc.Mode, 110);
+                TextBox len = Num("G:" + c + ":len", cc.LengthMm);
+                TextBox sb = Num("G:" + c + ":sb", cc.SetbackMm);
+                row.Children.Add(m);
+                row.Children.Add(new TextBlock { Text = "L:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+                row.Children.Add(len);
+                row.Children.Add(new TextBlock { Text = "retiro:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+                row.Children.Add(sb);
+                _gCats[c] = (m, len, sb);
+                AddRow(grid, r++, AngleCategories.Name(c) + ":", row, "Longitud fija centrada en el borde (si no cabe pasa a retiro y avisa) o borde menos dos retiros. Plano: 3050 / 3050 / 2070 / 3400 (retiros 125 / 125 / 115 / 50).");
+            }
+            group.Content = grid;
+            return group;
+        }
+
+        private void Message(string text) { _message.Foreground = RevitTheme.Error; _message.Text = text ?? ""; }
+
+        private void LoadGridTypeFields()
+        {
+            int i = _gTypes.SelectedIndex;
+            if (i < 0 || i >= _gridTypes.Count) return;
+            GridTypeCfg t = _gridTypes[i];
+            _gtName.Text = t.Name; _gtDesig.Text = t.Designation; _gtHeight.Text = NumText(t.HeightMm); _gtKg.Text = NumText(t.KgPerM2);
+        }
+
+        private bool ReadGridTypeFields(out GridTypeCfg t, out string error)
+        {
+            t = new GridTypeCfg { Name = _gtName.Text.Trim(), Designation = _gtDesig.Text.Trim() };
+            error = null;
+            if (t.Name == "") { error = "el tipo de rejilla necesita un nombre"; return false; }
+            if (!TryNumber(_gtHeight.Text, out double h) || h <= 0) { error = "alto de rejilla no valido"; return false; }
+            if (!TryNumber(_gtKg.Text, out double kg) || kg < 0) { error = "peso de rejilla no valido"; return false; }
+            t.HeightMm = h; t.KgPerM2 = kg;
+            return true;
+        }
+
+        private void RefreshGridTypeCombos()
+        {
+            FillGridTypeCombo(_gDefaultType, _gDefaultType.SelectedItem as string, false);
+            foreach (var kv in _gridTypeCombos) FillGridTypeCombo(kv.Value, kv.Key.GridTypeOverride, true);
+        }
+
         private UIElement BuildLamina()
         {
             var grid = new Grid();
@@ -465,6 +672,11 @@ namespace BlockRebar
             _showLabels.Checked += (s, e) => _state.ShowLabels = true; _showLabels.Unchecked += (s, e) => _state.ShowLabels = false;
             _showCovers.Checked += (s, e) => _state.ShowCovers = true; _showCovers.Unchecked += (s, e) => _state.ShowCovers = false;
             head.Children.Add(_showDims); head.Children.Add(_showLabels); head.Children.Add(_showCovers);
+            _showAngles = new CheckBox { Content = "Angulos", IsChecked = _state.ShowAngles, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
+            _showGrids = new CheckBox { Content = "Rejillas", IsChecked = _state.ShowGrids, Margin = Pad, VerticalAlignment = VerticalAlignment.Center };
+            _showAngles.Checked += (s, e) => _state.ShowAngles = true; _showAngles.Unchecked += (s, e) => _state.ShowAngles = false;
+            _showGrids.Checked += (s, e) => _state.ShowGrids = true; _showGrids.Unchecked += (s, e) => _state.ShowGrids = false;
+            head.Children.Add(_showAngles); head.Children.Add(_showGrids);
             DockPanel.SetDock(head, Dock.Top);
             planPanel.Children.Add(head);
             _caption = new TextBlock { Foreground = RevitTheme.Muted, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 4) };
@@ -569,6 +781,29 @@ namespace BlockRebar
                 Close();
             };
             buttons.Children.Add(_viewsButton);
+
+            _gridsButton = new Button { Content = "Colocar rejillas y angulos", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
+            _gridsButton.ToolTip = "Coloca los angulos de borde (Structural Framing) y las rejillas (Generic Model) de cada bloque segun el reparto de la lamina, sin tocar la armadura. Cada bloque en su subtransaccion; si ya tiene rejillas del plugin se pregunta si se borran antes.";
+            ToolTipService.SetShowOnDisabled(_gridsButton, true);
+            _gridsButton.Click += (s, e) =>
+            {
+                AppConfig c = ReadConfig(out string err);
+                if (err != null) { Message(err); return; }
+                Result = c; GridsRequested = true; DialogResult = true; Close();
+            };
+            buttons.Children.Add(_gridsButton);
+
+            int existingGrids = _items.Sum(i => i.PluginGridItems.Count);
+            _deleteGridsButton = new Button { Content = "Borrar rejillas y angulos del plugin", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0), IsEnabled = existingGrids > 0 };
+            _deleteGridsButton.ToolTip = existingGrids > 0 ? "Borra solo los " + existingGrids + " angulo(s) y rejilla(s) con la marca del plugin en los elementos seleccionados." : "Los elementos seleccionados no tienen rejillas ni angulos del plugin.";
+            ToolTipService.SetShowOnDisabled(_deleteGridsButton, true);
+            _deleteGridsButton.Click += (s, e) =>
+            {
+                MessageBoxResult r = MessageBox.Show(this, "Se borraran " + existingGrids + " angulo(s) y rejilla(s) colocados por el plugin. La armadura no se toca. ¿Continuar?", "Borrar rejillas y angulos", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (r != MessageBoxResult.Yes) return;
+                DeleteGridsRequested = true; DialogResult = true; Close();
+            };
+            buttons.Children.Add(_deleteGridsButton);
 
             var save = new Button { Content = "Guardar como valores por defecto", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
             save.ToolTip = "Guarda lo elegido en config.json (" + AppConfig.ConfigPath() + ") para las proximas veces.";
@@ -735,6 +970,33 @@ namespace BlockRebar
             sv.TagFamilyName = _svTag.SelectedIndex > 0 && _svTag.SelectedIndex - 1 < _tagTypes.Count ? _tagTypes[_svTag.SelectedIndex - 1].Display
                                : (_svTag.SelectedIndex == 0 ? "" : _cfg.SectionViews.TagFamilyName);
             sv.ShowSolid = _svSolid.IsChecked == true;
+            GridsCfg g = c.Grids;
+            g.Mode = ChoiceOf("G:mode");
+            g.MaxLengthMm = NumOf("G:maxLen", "largo maximo de rejilla", 1, errors);
+            g.ClearanceMm = NumOf("G:clear", "holgura de rejilla", 0, errors);
+            g.WidthReductionMm = NumOf("G:red", "reduccion de ancho de rejilla", 0, errors);
+            g.Types = _gridTypes.Select(t => t.Copy()).ToList();
+            g.DefaultType = _gDefaultType.SelectedItem as string ?? (g.Types.Count > 0 ? g.Types[0].Name : "");
+            g.FamilyName = _gFamilyName.Text.Trim();
+            AnglesCfg an = g.Angles;
+            an.Enabled = _gAnglesOn.IsChecked == true;
+            if (_gAngleType.SelectedIndex >= 0 && _gAngleType.SelectedIndex < _angleSymbols.Count)
+            {
+                an.FamilyName = _angleSymbols[_gAngleType.SelectedIndex].FamilyName;
+                an.TypeName = _angleSymbols[_gAngleType.SelectedIndex].TypeName;
+            }
+            an.KgPerMDefault = NumOf("G:kg", "kg/m del angulo", 0.01, errors);
+            an.BoltsPerAngle = (int)Math.Round(NumOf("G:bolts", "pernos por angulo", 0, errors));
+            an.LegMm = NumOf("G:leg", "ala del angulo", 1, errors);
+            an.RotationDeg = ReadNum(_gRot, "giro del angulo", -360, errors);
+            an.CornerClearanceMm = NumOf("G:corner", "holgura de esquina", 0, errors);
+            foreach (AngleCategory cat in AngleCategories.All)
+            {
+                AngleCategoryCfg cc = an.Of(cat);
+                cc.Mode = ChoiceOf("G:" + cat + ":mode");
+                cc.LengthMm = NumOf("G:" + cat + ":len", AngleCategories.Name(cat) + " longitud", 1, errors);
+                cc.SetbackMm = NumOf("G:" + cat + ":sb", AngleCategories.Name(cat) + " retiro", 0, errors);
+            }
             c.Preview.PlanLayer = Families.Code(_state.PlanLayer);
             c.Preview.ShowDims = _state.ShowDims; c.Preview.ShowLabels = _state.ShowLabels; c.Preview.ShowCovers = _state.ShowCovers;
             c.Normalize();
@@ -828,7 +1090,8 @@ namespace BlockRebar
                     {
                         runs.kind.Text = (good ? "Bloque" : (item.Outline == null ? "SIN ARMAR" : "RECHAZADO")) + ": ";
                         runs.kind.Foreground = good ? RevitTheme.Ok : RevitTheme.Error;
-                        runs.detail.Text = text + (item.PluginRebars.Count > 0 ? "  [ya tiene " + item.PluginRebars.Count + " conjunto(s) del plugin]" : "");
+                        runs.detail.Text = text + (item.PluginRebars.Count > 0 ? "  [ya tiene " + item.PluginRebars.Count + " conjunto(s) del plugin]" : "") +
+                                           (item.PluginGridItems.Count > 0 ? "  [ya tiene " + item.PluginGridItems.Count + " angulo(s)/rejilla(s) del plugin]" : "");
                     }
                 }
                 _buildButton.Content = "Armar " + ok + " elemento(s)";
@@ -839,7 +1102,27 @@ namespace BlockRebar
                     : "Crea las barras en Revit (cada bloque en su subtransaccion: o se arma entero y bien, o no se arma).";
                 _analyzeButton.IsEnabled = _items.Count > 0;
 
+                // rejillas y angulos: estado de la familia y del tipo de angulo
+                GridsCfg gc = scratch.Grids;
+                bool gridFamilyOk = _gridFamily.Loaded && NameMatch.Unique(new[] { _gridFamily.Name }, gc.FamilyName) != null;
+                _gFamilyStatus.Text = gridFamilyOk ? "cargada (" + _gridFamily.Types.Count + " tipo(s))" : "NO cargada: el boton la crea";
+                _gFamilyStatus.Foreground = gridFamilyOk ? RevitTheme.Ok : AmbiguousBorder;
+                _createFamilyButton.IsEnabled = !gridFamilyOk;
+                List<GridGenerator.AngleSymbolInfo> acands = GridGenerator.Candidates(_angleSymbols, gc.Angles.FamilyName, gc.Angles.TypeName);
+                GridGenerator.AngleSymbolInfo asel = _gAngleType.SelectedIndex >= 0 && _gAngleType.SelectedIndex < _angleSymbols.Count ? _angleSymbols[_gAngleType.SelectedIndex] : null;
+                string anglePending = null;
+                if (!gc.Angles.Enabled) { _gAngleStatus.Text = "angulos desactivados"; _gAngleStatus.Foreground = RevitTheme.Muted; }
+                else if (asel != null) { _gAngleStatus.Text = asel.Display + ": " + asel.KgPerM.ToString("0.00", CultureInfo.InvariantCulture) + " kg/m (" + asel.KgSource + ")"; _gAngleStatus.Foreground = RevitTheme.Ok; }
+                else if (acands.Count > 1) { anglePending = "tipo de angulo ambiguo (" + string.Join(", ", acands.Select(a => a.Display)) + "): elige uno"; _gAngleStatus.Text = "AMBIGUO: " + anglePending; _gAngleStatus.Foreground = AmbiguousBorder; }
+                else { _gAngleStatus.Text = "NO cargado: \"" + gc.Angles.FamilyName + "\" : \"" + gc.Angles.TypeName + "\". No se colocaran angulos (se avisa)."; _gAngleStatus.Foreground = AmbiguousBorder; }
+                if (anglePending != null || (gc.Angles.Enabled && asel == null)) { _gAngleType.Background = RevitTheme.OwnValue; _gAngleType.BorderBrush = AmbiguousBorder; _gAngleType.BorderThickness = new Thickness(2); }
+                else { _gAngleType.ClearValue(Control.BackgroundProperty); _gAngleType.ClearValue(Control.BorderBrushProperty); _gAngleType.ClearValue(Control.BorderThicknessProperty); }
+                double kgPerM = asel?.KgPerM ?? gc.Angles.KgPerMDefault;
+                bool gridsActive = gc.Mode != "off" || gc.Angles.Enabled;
+                _gridsButton.IsEnabled = gridsActive && anglePending == null && error == null && _items.Any(i => i.Outline != null && i.Frame(scratch)?.Topology?.Error == null);
+
                 bool newElement = false;
+                _lastGrid = null;
                 if (_selected != null && _selected.Outline != null)
                 {
                     ItemStatus(_selected, scratch, d, out string text, out BlockPlan plan);
@@ -847,6 +1130,11 @@ namespace BlockRebar
                     if (frame != null && frame.Topology?.Bottom == null) frame = null;   // contorno ilegible: no hay nada que dibujar
                     newElement = !ReferenceEquals(frame, _lastFrame);
                     _lastFrame = frame; _lastPlan = plan; _lastCfg = scratch;
+                    if (frame != null && frame.Topology.Error == null && gridsActive)
+                    {
+                        try { _lastGrid = GridPlan.Build(frame.Topology, gc, kgPerM, _selected.GridTypeOverride); }
+                        catch (Exception ex) { Log.Error("GridPlan", ex); }
+                    }
                     if (newElement && frame != null)
                     {
                         BlockTopology t = frame.Topology;
@@ -855,7 +1143,8 @@ namespace BlockRebar
                     }
                     _caption.Text = _selected.Tag + (frame != null ? frame.Describe() + ", " : "") + _selected.Outline.Describe() +
                                     (missing.Count > 0 ? "  (sin tipo de barra: " + string.Join(", ", missing) + ")" : "") +
-                                    (plan == null ? "  -> " + text : "");
+                                    (plan == null ? "  -> " + text : "") +
+                                    (_lastGrid != null ? Environment.NewLine + "rejillas y angulos: " + _lastGrid.Describe() + (_lastGrid.Warnings.Count > 0 ? " (" + string.Join("; ", _lastGrid.Warnings) + ")" : "") : "");
                     _partitionPreview.Text = "Ejemplo: " + _selected.Partition(scratch, "F1 u", Families.Code(Family.F1));
                 }
                 else
@@ -898,7 +1187,7 @@ namespace BlockRebar
                 _cutA = _cutB = null;
                 return;
             }
-            _plan.Show(_lastFrame, _lastPlan);
+            _plan.Show(_lastFrame, _lastPlan, _lastGrid);
             UpdateCuts(true);
             string refName = AppConfig.LevelReferenceName(_lastCfg.LevelReference);
             _secA.Show(_cutA, _lastPlan, refName, newElement);
@@ -918,12 +1207,14 @@ namespace BlockRebar
             {
                 var line = new SectionLine(true, _state.CutA);
                 _cutA = BlockSection.Cut(_lastPlan, frame.Topology, line, tol, zBase, s => frame.SampledTop(line, s));
+                BlockSection.AddGrids(_cutA, _lastGrid, BlockPlan.Mm(_lastCfg.Grids.Angles.LegMm));
                 _lastCutA = _state.CutA;
             }
             if (changedB)
             {
                 var line = new SectionLine(false, _state.CutB);
                 _cutB = BlockSection.Cut(_lastPlan, frame.Topology, line, tol, zBase, s => frame.SampledTop(line, s));
+                BlockSection.AddGrids(_cutB, _lastGrid, BlockPlan.Mm(_lastCfg.Grids.Angles.LegMm));
                 _lastCutB = _state.CutB;
             }
             if (_selected != null) _cutsByItem[_selected] = (_state.CutA, _state.CutB);
@@ -1011,6 +1302,22 @@ namespace BlockRebar
                 try { ItemStatus(item, scratch, d, out _, out plan); } catch { }
                 try { sb.AppendLine(item.Report(scratch, SafeOffset(scratch.LevelReference), plan)); }
                 catch (Exception ex) { sb.AppendLine(item.Tag + "ERROR en el informe: " + ex); }
+                if (item.Outline != null && (scratch.Grids.Mode != "off" || scratch.Grids.Angles.Enabled))
+                {
+                    try
+                    {
+                        BlockTopology tg = item.Frame(scratch)?.Topology;
+                        if (tg != null && tg.Error == null)
+                        {
+                            List<GridGenerator.AngleSymbolInfo> ac = GridGenerator.Candidates(_angleSymbols, scratch.Grids.Angles.FamilyName, scratch.Grids.Angles.TypeName);
+                            GridPlan gp = GridPlan.Build(tg, scratch.Grids, ac.Count == 1 ? ac[0].KgPerM : scratch.Grids.Angles.KgPerMDefault, item.GridTypeOverride);
+                            sb.AppendLine("REJILLAS Y ANGULOS: " + gp.Describe() + (ac.Count == 1 ? " [angulo " + ac[0].Display + ", " + ac[0].KgSource + "]" : " [sin tipo de angulo cargado: " + ac.Count + " candidatos]"));
+                            foreach (string w in gp.Warnings) sb.AppendLine("  aviso: " + w);
+                            if (gp.Error == null) { foreach (GridStrip st in gp.Strips) sb.AppendLine("  " + st.Describe()); foreach (AngleBar ab in gp.Angles) sb.AppendLine("  " + ab.Describe()); sb.AppendLine(gp.QuantityTable()); }
+                        }
+                    }
+                    catch (Exception ex) { sb.AppendLine("  ERROR en rejillas: " + ex.Message); }
+                }
                 if (plan != null && plan.Error == null && item.Outline != null)
                 {
                     try
@@ -1064,6 +1371,14 @@ namespace BlockRebar
             DialogResult = true;
             Close();
         }
+    }
+
+    /// <summary>Estado de la familia de rejilla en el proyecto (para la ventana, sin tipos de Revit).</summary>
+    public sealed class GridFamilyStatus
+    {
+        public bool Loaded;
+        public string Name = "";
+        public List<string> Types = new List<string>();
     }
 
     /// <summary>Informe de texto copiable (modo "Analizar sin armar").</summary>

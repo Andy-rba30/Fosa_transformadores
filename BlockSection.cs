@@ -71,9 +71,32 @@ namespace BlockRebar
         public double D;
     }
 
+    /// <summary>Pieza de rejilla cortada o vista en la seccion: rectangulo (s0..s1, z0..z1) y su grupo (P1...).</summary>
+    public sealed class SectionGrid
+    {
+        public double S0, S1, Z0, Z1;
+        public string Group = "";
+        /// <summary>True si el corte va a lo largo de la pieza (se ve su largo); false si la cruza (se ve su ancho).</summary>
+        public bool Lengthwise;
+        public GridPiece Piece;
+    }
+
+    /// <summary>Angulo de borde en la seccion: cortado (una L en s, abriendo hacia el foso) o visto a lo largo (banda s0..s1 bajo el tope).</summary>
+    public sealed class SectionAngle
+    {
+        public bool Crossing;
+        public double S, ZTop, Leg;
+        /// <summary>+1 si el foso (y el ala horizontal) queda hacia +s, -1 hacia -s.</summary>
+        public int Toward;
+        public double S0, S1;
+        public AngleBar Angle;
+    }
+
     /// <summary>Resultado de cortar el bloque armado por una linea de corte. Pura; la ventana solo la dibuja.</summary>
     public sealed class SectionCut
     {
+        public List<SectionGrid> Grids = new List<SectionGrid>();
+        public List<SectionAngle> Angles = new List<SectionAngle>();
         public SectionLine Line;
         public double SMin, SMax, ZTop;
         public double ZBaseElevation;
@@ -253,6 +276,45 @@ namespace BlockRebar
                 {
                     var first = side.OrderBy(i => Math.Abs(i.s - (side.Key == "centro" ? mid : (side.Key == "izq" ? cut.SMin : cut.SMax)))).First();
                     cut.Labels.Add(new SectionLabel { Family = f, Side = side.Key, Anchor = first.anchor, D = first.d, Text = LabelText(plan, f, first.g, first.d) });
+                }
+            }
+        }
+
+        /// <summary>
+        /// Anade al corte las rejillas y angulos del plan de rejillas: piezas cuyo rectangulo
+        /// cruza la linea de corte y angulos cortados por el plano (perpendiculares) o vistos a
+        /// lo largo (paralelos a menos de un ala del plano).
+        /// </summary>
+        public static void AddGrids(SectionCut cut, GridPlan g, double legFt)
+        {
+            cut.Grids.Clear(); cut.Angles.Clear();
+            if (g == null || g.Error != null) return;
+            SectionLine line = cut.Line;
+            double h = BlockPlan.Mm(g.Type?.HeightMm ?? 38);
+            foreach (GridPiece p in g.Pieces)
+            {
+                bool crosses = line.AlongU ? (p.VMin <= line.Coord && line.Coord <= p.VMax) : (p.UMin <= line.Coord && line.Coord <= p.UMax);
+                if (!crosses) continue;
+                cut.Grids.Add(new SectionGrid
+                {
+                    S0 = line.AlongU ? p.UMin : p.VMin, S1 = line.AlongU ? p.UMax : p.VMax, Z0 = p.ZTop - h, Z1 = p.ZTop,
+                    Group = p.Group, Lengthwise = p.AlongU == line.AlongU, Piece = p
+                });
+            }
+            foreach (AngleBar a in g.Angles)
+            {
+                bool alongCut = line.AlongU ? Math.Abs(a.B.V - a.A.V) < 1e-9 : Math.Abs(a.B.U - a.A.U) < 1e-9;
+                double ca = line.AlongU ? a.A.V : a.A.U, cb = line.AlongU ? a.B.V : a.B.U;
+                if (!alongCut)
+                {
+                    if ((ca <= line.Coord) == (cb <= line.Coord) && Math.Abs(ca - line.Coord) > 1e-9 && Math.Abs(cb - line.Coord) > 1e-9) continue;
+                    double sInward = line.AlongU ? a.Inward.U : a.Inward.V;
+                    cut.Angles.Add(new SectionAngle { Crossing = true, S = line.AlongU ? a.A.U : a.A.V, ZTop = a.ZTop, Leg = legFt, Toward = sInward >= 0 ? 1 : -1, Angle = a });
+                }
+                else if (Math.Abs(ca - line.Coord) <= legFt)
+                {
+                    double s0 = line.AlongU ? a.A.U : a.A.V, s1 = line.AlongU ? a.B.U : a.B.V;
+                    cut.Angles.Add(new SectionAngle { Crossing = false, S0 = Math.Min(s0, s1), S1 = Math.Max(s0, s1), ZTop = a.ZTop, Leg = legFt, Angle = a });
                 }
             }
         }

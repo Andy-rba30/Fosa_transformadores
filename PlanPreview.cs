@@ -25,6 +25,9 @@ namespace BlockRebar
         public static readonly Brush Dim = Freeze(Rgb(0x55, 0x55, 0x55));          // cotas
         public static readonly Brush Cover = Freeze(Rgb(0x9A, 0x9A, 0x9A));        // lineas de recubrimiento
         public static readonly Brush Level = Freeze(Rgb(0x30, 0x30, 0x30));
+        public static readonly Brush Angle = Freeze(Rgb(0x3A, 0x3F, 0x47));          // angulos de borde (acero)
+        public static readonly Brush GridFill = Freeze(Rgb(0xC6, 0xCE, 0xD6));       // rejillas
+        public static readonly Brush GridEdge = Freeze(Rgb(0x5A, 0x64, 0x72));
 
         private static readonly Brush[] Fam =
         {
@@ -57,6 +60,7 @@ namespace BlockRebar
         private readonly PreviewState _state;
         private BlockFrame _f;
         private BlockPlan _plan;
+        private GridPlan _grid;
         private string _message = "Sin elemento armable";
 
         private double _zoom = 1;
@@ -84,16 +88,16 @@ namespace BlockRebar
             Cursor = Cursors.Hand;
         }
 
-        public void Show(BlockFrame f, BlockPlan plan)
+        public void Show(BlockFrame f, BlockPlan plan, GridPlan grid = null)
         {
             bool changed = !ReferenceEquals(_f, f);
-            _f = f; _plan = plan;
+            _f = f; _plan = plan; _grid = grid;
             if (changed) ResetView(); else Redraw();
         }
 
         public void Clear(string message)
         {
-            _f = null; _plan = null; _message = message;
+            _f = null; _plan = null; _grid = null; _message = message;
             Redraw();
         }
 
@@ -278,6 +282,34 @@ namespace BlockRebar
                 Text("foso " + (rc.Index + 1) + "  -" + Mm(rc.Depth), X(c0.U) - 24, Y(c0.V) - 8, PlanColors.RecessEdge, 10, true);
             }
 
+            // rejillas: piezas rayadas con su grupo
+            if (_grid != null && _grid.Error == null && _state.ShowGrids && _grid.Cfg.Mode != "off")
+            {
+                var labeled = new HashSet<string>();
+                foreach (GridPiece p in _grid.Pieces)
+                {
+                    double x1 = X(p.UMin), x2 = X(p.UMax), y1 = Y(p.VMax), y2 = Y(p.VMin);
+                    var rect = new Rectangle { Width = Math.Max(1, x2 - x1), Height = Math.Max(1, y2 - y1), Fill = PlanColors.GridFill, Stroke = PlanColors.GridEdge, StrokeThickness = 0.8, Opacity = 0.9,
+                                               ToolTip = "rejilla " + p.Group + ": " + Mm(p.Length) + " x " + Mm(p.Width) + " mm, foso " + (p.Recess + 1) };
+                    SetLeft(rect, x1); SetTop(rect, y1);
+                    Children.Add(rect);
+                    // barras portantes (a lo ancho de la pieza) cada 30 mm, solo si se ven
+                    double step = BlockPlan.Mm(30) * k;
+                    if (step >= 4)
+                    {
+                        var hatch = new StreamGeometry();
+                        using (StreamGeometryContext c = hatch.Open())
+                        {
+                            if (p.AlongU) for (double x = x1 + step; x < x2; x += step) { c.BeginFigure(new Point(x, y1), false, false); c.LineTo(new Point(x, y2), true, false); }
+                            else for (double y = y1 + step; y < y2; y += step) { c.BeginFigure(new Point(x1, y), false, false); c.LineTo(new Point(x2, y), true, false); }
+                        }
+                        hatch.Freeze();
+                        Children.Add(new Path { Data = hatch, Stroke = PlanColors.GridEdge, StrokeThickness = 0.4, IsHitTestVisible = false, Opacity = 0.7 });
+                    }
+                    if (labeled.Add(p.Group + ":" + p.Recess + ":" + p.AlongU)) Text(p.Group, 0.5 * (x1 + x2) - 7, 0.5 * (y1 + y2) - 7, PlanColors.GridEdge, 9, true);
+                }
+            }
+
             if (_plan != null && _plan.Error == null)
             {
                 Family layer = _state.PlanLayer;
@@ -290,6 +322,22 @@ namespace BlockRebar
                     bool face = (int)b.Family >= (int)Family.F4;
                     if (!face && _state.Isolated != b.Family) continue;   // las otras mallas solo si se aislan
                     DrawBar(b, X, Y, k, face ? Math.Max(1.0, 0.6 * b.D * k) : Math.Max(1.1, b.D * k), true);
+                }
+            }
+
+            // angulos de borde: linea gruesa a media ala del borde, hacia el foso
+            if (_grid != null && _grid.Error == null && _state.ShowAngles && _grid.Cfg.Angles.Enabled)
+            {
+                double leg = BlockPlan.Mm(_grid.Cfg.Angles.LegMm);
+                foreach (AngleBar a in _grid.Angles)
+                {
+                    Pt oa = new Pt(a.A.U + a.Inward.U * 0.5 * leg, a.A.V + a.Inward.V * 0.5 * leg), ob = new Pt(a.B.U + a.Inward.U * 0.5 * leg, a.B.V + a.Inward.V * 0.5 * leg);
+                    Children.Add(new Line
+                    {
+                        X1 = X(oa.U), Y1 = Y(oa.V), X2 = X(ob.U), Y2 = Y(ob.V), Stroke = PlanColors.Angle, StrokeThickness = Math.Max(2.5, leg * k),
+                        StrokeStartLineCap = PenLineCap.Flat, StrokeEndLineCap = PenLineCap.Flat, Opacity = 0.85,
+                        ToolTip = a.Describe() + ", " + Mm(a.Length) + " mm"
+                    });
                 }
             }
 

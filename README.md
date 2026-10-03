@@ -115,8 +115,42 @@ rechazos; también queda en `%Temp%\BlockRebar.log`.
   lámina (escala 1:20, detalle fino, recorte con margen, nombre `{marca} - Sección {letra}`,
   acero sin ocultar, una etiqueta por conjunto y familia si la familia de etiqueta está
   cargada), al armar o con el botón "Crear solo las vistas de sección".
-- **Fase 3** (siguiente): rejillas de foso (ángulos de borde, rejillas Generic Model, pernos
-  contados), ver `PLAN.md` sección 7.
+- **Fase 3** (esta): rejillas de foso y ángulos de borde (`GridPlan` puro + `GridGenerator`),
+  ver abajo.
+
+## Rejillas de foso y ángulos de borde (fase 3)
+
+Botón **Colocar rejillas y ángulos** (independiente del armado). Cada foso rectilíneo se
+descompone en **franjas rectangulares** cortándolo en sus esquinas entrantes con líneas
+paralelas a su lado corto: en el foso perimetral del plano, las franjas de los lados cortos
+llevan las esquinas (**P1**, L = 3500) y las de los lados largos van entre ellas (**P2**,
+L = 3300).
+
+- **Rejillas** (Generic Model `Rejilla ARBA`, parámetros de instancia Largo, Ancho y Espesor;
+  tipo con Peso por m2 y Peso = Largo × Ancho × Peso por m2; material "Rejilla" con patrón de
+  líneas cada 30 mm). Reparto por franja: `n = techo(L / largoMax)`, pieza = `L/n − holgura`,
+  ancho = ancho del foso − 10 (825 / 5 / 10 por defecto). Al ras del tope. Modos: modelar,
+  solo informe o desactivado. Lista editable de **tipos de rejilla** (nombre, designación, alto,
+  kg/m²; 31.0 kg/m² por defecto, del cuadro de parrillas), tipo elegible por bloque. Si la
+  familia no está cargada, el botón **Crear familia de rejilla** la genera desde la plantilla
+  Generic Model de Revit, la guarda junto a la DLL y la carga.
+- **Ángulos** (Structural Framing, familia `L-Angle` tipo `L2-1/2X2-1/2X1/4` por defecto, regla
+  de nombres de los tipos de barra): dos por franja, en sus bordes largos, cada uno **centrado
+  en su borde**, clasificados por {lado largo | lado corto} × {borde de núcleo | borde de
+  murete} con longitud fija (3050 / 3050 / 2070 / 3400) o retiro (125 / 125 / 115 / 50); si la
+  longitud fija no cabe pasa a retiro y avisa; si dos ángulos se tocaran en una esquina se
+  recortan con 10 mm de holgura y avisa. El eje de la viga va a media ala del borde y de la cara
+  superior, con el foso siempre a la izquierda de la viga (`rotationDeg` orienta las alas para
+  todos a la vez). Peso lineal del parámetro de tipo **W** (masa por longitud convertida con la
+  API, o número tomado como lb/ft: 4.10 = 6.10 kg/m); si no se lee, 6.10 kg/m. **Pernos de
+  expansión 1/2"**: 5 por ángulo, solo contados.
+- Caso del plano (en `Tests/`): 8 ángulos (4 × 3050, 2 × 2070, 2 × 3400) = 23.14 m, 141.2 kg,
+  40 pernos; 10 P1 de 695 × 590 (127.1 kg) y 8 P2 de 820 × 590 (120.0 kg).
+- Lámina: rejillas rayadas con su grupo y ángulos en planta y en las secciones (L en los
+  cortados, banda en los vistos a lo largo). Informe con metrado: m y kg de ángulo, pernos,
+  piezas, m² y kg de rejilla por grupo. Marca del plugin en Comentarios (`BlockRebar ANGLE host
+  <id>` / `BlockRebar GRID host <id>`), subtransacción por elemento, pregunta "borrar y
+  recolocar / conservar" si ya los tiene, botón **Borrar rejillas y ángulos del plugin**, Ctrl+Z.
 
 ## config.json
 
@@ -171,6 +205,8 @@ y (3) una captura de la lámina, de las barras en Revit o del error.
 | `BarTypes.cs`, `NameMatch.cs` | Tipos de barra del proyecto, diámetros reales y regla de nombres (exacto, fragmento único, ambiguo). |
 | `RebarGenerator.cs` | Crea los `Rebar` con las dos redes de seguridad, marca del plugin, borrado y comparación con lo previsto. |
 | `SectionViews.cs` | Vistas de sección A-A y B-B en Revit, acero sin ocultar y etiquetas por conjunto. |
+| `GridPlan.cs` | Rejillas y ángulos de borde, puro: franjas, piezas, ángulos por categoría, recortes de esquina, metrado. |
+| `GridGenerator.cs` | Ángulos (Structural Framing), rejillas (Generic Model), familia de rejilla generada, marca y borrado. |
 | `RebarOptionsWindow.cs`, `PlanPreview.cs`, `SectionPreview.cs`, `PreviewState.cs` | La lámina (WPF en código, sin XAML). |
 | `RevitTheme.cs`, `RibbonApp.cs`, `ArmarBloqueCommand.cs`, `Log.cs` | Tema oscuro, cinta, comando y registro. |
 | `AppConfig.cs`, `PartitionName.cs` | Configuración y plantilla de Partición. |

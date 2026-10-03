@@ -27,6 +27,10 @@ namespace BlockRebar
 
         /// <summary>Conjuntos de armadura que el plugin ya creo en este elemento (comentario con la marca del plugin).</summary>
         public List<ElementId> PluginRebars = new List<ElementId>();
+        /// <summary>Angulos y rejillas que el plugin ya coloco en este elemento.</summary>
+        public List<ElementId> PluginGridItems = new List<ElementId>();
+        /// <summary>Tipo de rejilla propio ("" = el por defecto).</summary>
+        public string GridTypeOverride = "";
 
         public bool CanBuild => Error == null && Outline != null && Topology(null) != null && Topology(null).Error == null;
 

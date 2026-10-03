@@ -15,7 +15,7 @@ namespace BlockRebar
         private PlannedBar _hover;
         private Family? _isolated;
         private Family _planLayer = Family.F1;
-        private bool _showDims = true, _showLabels = true, _showCovers;
+        private bool _showDims = true, _showLabels = true, _showCovers, _showGrids = true, _showAngles = true;
 
         /// <summary>Corte A-A: plano u-z a v = CutA (pies, coordenadas locales).</summary>
         public double CutA { get => _cutA; set { if (Math.Abs(_cutA - value) > 1e-9) { _cutA = value; Raise(); } } }
@@ -30,6 +30,8 @@ namespace BlockRebar
         public bool ShowDims { get => _showDims; set { if (_showDims != value) { _showDims = value; Raise(); } } }
         public bool ShowLabels { get => _showLabels; set { if (_showLabels != value) { _showLabels = value; Raise(); } } }
         public bool ShowCovers { get => _showCovers; set { if (_showCovers != value) { _showCovers = value; Raise(); } } }
+        public bool ShowGrids { get => _showGrids; set { if (_showGrids != value) { _showGrids = value; Raise(); } } }
+        public bool ShowAngles { get => _showAngles; set { if (_showAngles != value) { _showAngles = value; Raise(); } } }
 
         /// <summary>Cortes al centro del bloque (al cambiar de elemento).</summary>
         public void SetCuts(double cutA, double cutB)

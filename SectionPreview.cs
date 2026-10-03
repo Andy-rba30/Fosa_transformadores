@@ -182,6 +182,41 @@ namespace BlockRebar
             // recubrimientos a trazos
             if (_state.ShowCovers && _plan != null) Covers(cut, X, Y);
 
+            // rejillas (al ras del tope del foso) y angulos de borde
+            if (_state.ShowGrids)
+                foreach (SectionGrid sg in cut.Grids)
+                {
+                    double x1 = X(sg.S0), x2 = X(sg.S1), y1 = Y(sg.Z1), y2 = Y(sg.Z0);
+                    var rect = new Rectangle { Width = Math.Max(1, x2 - x1), Height = Math.Max(1.5, y2 - y1), Fill = PlanColors.GridFill, Stroke = PlanColors.GridEdge, StrokeThickness = 0.9,
+                                               ToolTip = "rejilla " + sg.Group + (sg.Lengthwise ? " (vista a lo largo)" : " (cortada)") + ": " + Mm(sg.Piece.Length) + " x " + Mm(sg.Piece.Width) + " mm, alto " + Mm(sg.Z1 - sg.Z0) };
+                    SetLeft(rect, x1); SetTop(rect, y1);
+                    Children.Add(rect);
+                    if (!sg.Lengthwise)
+                    {
+                        double step = BlockPlan.Mm(30) * k;
+                        if (step >= 3) for (double x = x1 + step; x < x2; x += step) Children.Add(new Line { X1 = x, Y1 = y1, X2 = x, Y2 = y2, Stroke = PlanColors.GridEdge, StrokeThickness = 0.5, IsHitTestVisible = false });
+                    }
+                    if (_state.ShowLabels) Text(sg.Group, 0.5 * (x1 + x2) - 7, y1 - 13, PlanColors.GridEdge, 9, true);
+                }
+            if (_state.ShowAngles)
+                foreach (SectionAngle sa in cut.Angles)
+                {
+                    double th = Math.Max(1.5, BlockPlan.Mm(6.4) * k);
+                    if (sa.Crossing)
+                    {
+                        double x = X(sa.S), yT = Y(sa.ZTop), yB = Y(sa.ZTop - sa.Leg), xL = X(sa.S + sa.Toward * sa.Leg);
+                        var pl = new Polyline { Stroke = PlanColors.Angle, StrokeThickness = th, StrokeLineJoin = PenLineJoin.Miter, ToolTip = sa.Angle.Describe() };
+                        pl.Points.Add(new Point(x, yT)); pl.Points.Add(new Point(x, yB)); pl.Points.Add(new Point(xL, yB));
+                        Children.Add(pl);
+                    }
+                    else
+                    {
+                        var rect = new Rectangle { Width = Math.Max(1, X(sa.S1) - X(sa.S0)), Height = Math.Max(1.5, sa.Leg * k), Fill = Brushes.Transparent, Stroke = PlanColors.Angle, StrokeThickness = 1, ToolTip = sa.Angle.Describe() + " (visto a lo largo)" };
+                        SetLeft(rect, X(sa.S0)); SetTop(rect, Y(sa.ZTop));
+                        Children.Add(rect);
+                    }
+                }
+
             // barras: primero las contenidas en el plano, encima las cortadas
             if (_plan != null && _plan.Error == null)
             {
