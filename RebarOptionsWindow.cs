@@ -704,6 +704,7 @@ namespace BlockRebar
                 {
                     ItemStatus(_selected, scratch, d, out string text, out BlockPlan plan);
                     BlockFrame frame = _selected.Frame(scratch);
+                    if (frame != null && frame.Topology?.Bottom == null) frame = null;   // contorno ilegible: no hay nada que dibujar
                     newElement = !ReferenceEquals(frame, _lastFrame);
                     _lastFrame = frame; _lastPlan = plan; _lastCfg = scratch;
                     if (newElement && frame != null)
