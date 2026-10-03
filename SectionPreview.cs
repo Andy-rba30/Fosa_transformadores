@@ -204,15 +204,17 @@ namespace BlockRebar
                     double th = Math.Max(1.5, BlockPlan.Mm(6.4) * k);
                     if (sa.Crossing)
                     {
-                        double x = X(sa.S), yT = Y(sa.ZTop), yB = Y(sa.ZTop - sa.Leg), xL = X(sa.S + sa.Toward * sa.Leg);
-                        var pl = new Polyline { Stroke = PlanColors.Angle, StrokeThickness = th, StrokeLineJoin = PenLineJoin.Miter, ToolTip = sa.Angle.Describe() };
-                        pl.Points.Add(new Point(x, yT)); pl.Points.Add(new Point(x, yB)); pl.Points.Add(new Point(xL, yB));
+                        // talon en la cara del foso a la cota de apoyo: ala vertical hacia abajo contra la pared, ala horizontal hacia el foso
+                        double tHalf = 0.5 * th;
+                        double x = X(sa.S) + sa.Toward * tHalf, yH = Y(sa.ZHeel) + tHalf, yB = Y(sa.ZHeel - sa.Leg), xL = X(sa.S + sa.Toward * sa.Leg);
+                        var pl = new Polyline { Stroke = PlanColors.Angle, StrokeThickness = th, StrokeLineJoin = PenLineJoin.Miter, ToolTip = sa.Angle.Describe() + "; talon a " + Mm(sa.ZTop - sa.ZHeel) + " mm bajo el tope" };
+                        pl.Points.Add(new Point(x, yB)); pl.Points.Add(new Point(x, yH)); pl.Points.Add(new Point(xL, yH));
                         Children.Add(pl);
                     }
                     else
                     {
                         var rect = new Rectangle { Width = Math.Max(1, X(sa.S1) - X(sa.S0)), Height = Math.Max(1.5, sa.Leg * k), Fill = Brushes.Transparent, Stroke = PlanColors.Angle, StrokeThickness = 1, ToolTip = sa.Angle.Describe() + " (visto a lo largo)" };
-                        SetLeft(rect, X(sa.S0)); SetTop(rect, Y(sa.ZTop));
+                        SetLeft(rect, X(sa.S0)); SetTop(rect, Y(sa.ZHeel));
                         Children.Add(rect);
                     }
                 }

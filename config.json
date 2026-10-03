@@ -41,7 +41,7 @@
     "familyName": "Rejilla ARBA", "familyTemplatePath": "",
     "angles": {
       "enabled": true, "familyName": "L-Angle", "typeName": "L2-1/2X2-1/2X1/4", "kgPerMDefault": 6.10, "boltsPerAngle": 5,
-      "legMm": 63.5, "rotationDeg": 0, "cornerClearanceMm": 10,
+      "legMm": 63.5, "thicknessMm": 6.35, "rotationDeg": 0, "cornerClearanceMm": 10,
       "longCore":  { "mode": "fixedLength", "lengthMm": 3050, "setbackMm": 125 },
       "longWall":  { "mode": "fixedLength", "lengthMm": 3050, "setbackMm": 125 },
       "shortCore": { "mode": "fixedLength", "lengthMm": 2070, "setbackMm": 115 },

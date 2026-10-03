@@ -194,6 +194,26 @@ namespace BlockRebar.Tests
             Check(g.Warnings.Count == 0, "sin avisos en el caso del plano");
             Console.WriteLine(g.QuantityTable());
 
+            // talon y choques: angulo contra hormigon, contra rejilla y contra barras
+            Near(g.Angles[0].ZHeel, 1300 - 38, "talon a 38 mm bajo el tope (z = 1262)");
+            BlockPlan rebar = BlockPlan.Build(t, c, Diam(c));
+            GridPlan.ClashReport gcr = g.CheckClashes(rebar, Mm(63.5), Mm(6.35));
+            Console.WriteLine(gcr.Describe());
+            Check(gcr.Ok, "angulos sin choques con hormigon, rejilla ni barras (" + gcr.Clashes.Count + ")");
+            Check(gcr.Lines.Any(l => l.Contains("talon") && l.Contains("38 mm bajo el tope") && l.Contains("sin solape")), "el informe da la cota del talon y del apoyo de la rejilla");
+            Check(gcr.Lines.Count(l => l.Contains("barra mas cercana")) == 8, "distancia a la barra mas cercana informada para los 8 angulos");
+            var c4 = Cfg();
+            BlockTopology shallow = BlockTopology.Build(new[] { Box(0, 0, 3000, 2500) }, new[] { Box(0, 0, 3000, 2500), Box(900, 700, 2100, 1800) },
+                new[] { (new List<List<Pt>> { Box(900, 700, 2100, 1800) }, Mm(920)) }, Mm(1000), Mm(300), Mm(2));
+            GridPlan g4 = GridPlan.Build(shallow, c4.Grids, 6.10);
+            GridPlan.ClashReport r4 = g4.CheckClashes(null, Mm(63.5), Mm(6.35));
+            Check(!r4.Ok && r4.Clashes.All(x => x.Contains("fondo del foso")), "foso de 80 mm: el ala vertical entraria en el fondo -> choque (" + r4.Clashes.Count + ")");
+            BlockTopology narrow = BlockTopology.Build(new[] { Box(0, 0, 3000, 2500) }, new[] { Box(0, 0, 3000, 2500), Box(900, 700, 2100, 750) },
+                new[] { (new List<List<Pt>> { Box(900, 700, 2100, 750) }, Mm(500)) }, Mm(1000), Mm(300), Mm(2));
+            GridPlan g5 = GridPlan.Build(narrow, c4.Grids, 6.10);
+            GridPlan.ClashReport r5 = g5.CheckClashes(null, Mm(63.5), Mm(6.35));
+            Check(g5.Angles.Count > 0 && !r5.Ok && r5.Clashes.Any(x => x.Contains("cara opuesta")), "canaleta de 50 mm: el ala horizontal llegaria a la cara opuesta -> choque");
+
             // rejillas y angulos en las secciones: A-A por el centro cruza las franjas P1 y los 4 angulos de los lados cortos
             SectionCut ca = BlockSection.Cut(null, t, new SectionLine(true, Mm(1900)), Mm(2));
             BlockSection.AddGrids(ca, g, Mm(63.5));

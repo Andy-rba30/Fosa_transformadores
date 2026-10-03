@@ -44,6 +44,13 @@ añade su botón al desplegable "Acero" del panel "Acero", así que da igual cu�
 Si se desinstala Bloques con foso, solo hay que borrar `BlockRebar.addin` y la carpeta
 `BlockRebar\`; el desplegable sigue con los demás botones.
 
+## Archivos que genera el plugin en uso
+
+- `%AppData%\Autodesk\Revit\Addins\2027\BlockRebar\Rejilla ARBA.rfa`: la familia de rejilla que crea el botón
+  "Crear familia de rejilla" (se guarda junto a la DLL y se carga en el proyecto). No hace falta
+  instalarla; si el instalador encuentra una de una versión anterior, puede dejarla.
+- `%Temp%\BlockRebar.log`: registro de cada ejecución.
+
 ## Comprobación tras instalar
 
 1. Abrir Revit 2027.2 y aceptar la carga del add-in (si pide confirmación por el VendorId).

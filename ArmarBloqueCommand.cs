@@ -122,7 +122,7 @@ namespace BlockRebar
             // --- 3b. Solo vistas de seccion (sin armar) ---
             if (win.ViewsOnlyRequested) return CreateViewsOnly(doc, items, cfg, win, tagTypes, commandData);
             // --- 3b'. Rejillas y angulos (sin armar) ---
-            if (win.GridsRequested) return PlaceGrids(doc, items, cfg, angleSymbols, commandData);
+            if (win.GridsRequested) return PlaceGrids(doc, items, cfg, angleSymbols, barTypes, commandData);
 
             // --- 3c. Elementos que ya tienen barras del plugin: borrar antes de rearmar o conservar ---
             var withExisting = items.Where(i => i.Outline != null && i.PluginRebars.Count > 0).ToList();
@@ -275,9 +275,10 @@ namespace BlockRebar
             return Result.Succeeded;
         }
 
-        private static Result PlaceGrids(Document doc, List<HostAnalysis> items, AppConfig cfg, List<GridGenerator.AngleSymbolInfo> angleSymbols, ExternalCommandData commandData)
+        private static Result PlaceGrids(Document doc, List<HostAnalysis> items, AppConfig cfg, List<GridGenerator.AngleSymbolInfo> angleSymbols, List<BarTypes.Info> barTypes, ExternalCommandData commandData)
         {
             GridsCfg g = cfg.Grids;
+            PlanDiameters diam = BarTypes.Diameters(barTypes, cfg, out List<string> missingTypes);
             List<GridGenerator.AngleSymbolInfo> cands = GridGenerator.Candidates(angleSymbols, g.Angles.FamilyName, g.Angles.TypeName);
             GridGenerator.AngleSymbolInfo angle = cands.Count == 1 ? cands[0] : null;
             Autodesk.Revit.DB.Family gridFamily = GridGenerator.FindGridFamily(doc, g.FamilyName);
@@ -316,6 +317,7 @@ namespace BlockRebar
                         sub.Start();
                         GridGenerator.PlaceResult res = null;
                         GridPlan plan = null;
+                        GridPlan.ClashReport clash = null;
                         string error = null;
                         int deleted = 0;
                         try
@@ -324,6 +326,10 @@ namespace BlockRebar
                             if (t == null || t.Error != null) throw new InvalidOperationException(t?.Error ?? "sin geometria legible");
                             plan = GridPlan.Build(t, g, angle?.KgPerM ?? g.Angles.KgPerMDefault, item.GridTypeOverride);
                             if (plan.Error != null) throw new InvalidOperationException(plan.Error);
+                            // red de seguridad: angulo contra hormigon, contra rejilla y contra las barras previstas
+                            BlockPlan rebarPlan = missingTypes.Count == 0 ? BlockPlan.Build(t, cfg, diam) : null;
+                            clash = plan.CheckClashes(rebarPlan, BlockPlan.Mm(g.Angles.LegMm), BlockPlan.Mm(g.Angles.ThicknessMm));
+                            if (!clash.Ok) throw new InvalidOperationException("choques de los angulos: " + string.Join(" | ", clash.Clashes));
                             if (deleteFirst && item.PluginGridItems.Count > 0) deleted = GridGenerator.DeletePluginItems(doc, item.Host, out _, out _);
                             res = GridGenerator.Place(doc, item, cfg, plan, angle, gridFamily);
                         }
@@ -340,6 +346,7 @@ namespace BlockRebar
                             detail.AppendLine(plan.Describe());
                             foreach (GridStrip st in plan.Strips) detail.AppendLine(st.Describe());
                             detail.AppendLine(plan.QuantityTable());
+                            if (clash != null) detail.AppendLine(clash.Describe());
                             foreach (string l in res.Lines) detail.AppendLine(l);
                             foreach (string w in plan.Warnings) detail.AppendLine("aviso (reparto): " + w);
                             foreach (string w in res.Warnings) detail.AppendLine("aviso: " + w);

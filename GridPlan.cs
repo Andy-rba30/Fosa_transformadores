@@ -58,7 +58,12 @@ namespace BlockRebar
         public double VMax => Center.V + 0.5 * (AlongU ? Width : Length);
     }
 
-    /// <summary>Un angulo de borde: tramo A -> B sobre el borde del foso con el foso a la IZQUIERDA (Inward = Left(dir)).</summary>
+    /// <summary>
+    /// Un angulo de borde: tramo A -> B sobre el borde del foso con el foso a la IZQUIERDA
+    /// (Inward = Left(dir)). El talon (esquina exterior) va EN la cara del foso a ZHeel =
+    /// tope - alto de rejilla; ala horizontal hacia el foso (apoyo de la rejilla) y ala
+    /// vertical hacia abajo con su cara exterior contra la pared.
+    /// </summary>
     public sealed class AngleBar
     {
         public int Recess;
@@ -66,6 +71,8 @@ namespace BlockRebar
         public Pt Inward;
         public AngleCategory Category;
         public double ZTop;
+        /// <summary>Cota del talon (cara superior del ala horizontal): tope menos alto de rejilla.</summary>
+        public double ZHeel;
         public string Note = "";
         public double Length => A.DistanceTo(B);
         public Pt Dir => Geometry2D.Unit(Geometry2D.Sub(B, A));
@@ -335,7 +342,7 @@ namespace BlockRebar
                     double tc = 0.5 * (t0 + t1);
                     list.Add(new AngleBar
                     {
-                        Recess = rc.Index, Category = cat, Inward = inward, ZTop = Topo.ZTop, Note = note,
+                        Recess = rc.Index, Category = cat, Inward = inward, ZTop = Topo.ZTop, ZHeel = Topo.ZTop - Mm(Type?.HeightMm ?? 38), Note = note,
                         A = Geometry2D.Add(a, Geometry2D.Scale(dir, tc - 0.5 * la)),
                         B = Geometry2D.Add(a, Geometry2D.Scale(dir, tc + 0.5 * la))
                     });
@@ -390,6 +397,86 @@ namespace BlockRebar
                 if (Geometry2D.DistanceToSegment(p, other.A, other.B, out _) < clear) hi = m; else lo = m;
             }
             return Geometry2D.Add(o, Geometry2D.Scale(Geometry2D.Sub(e, o), lo));
+        }
+
+        // =================================================================
+        // Choques: angulo contra hormigon, contra rejilla y contra barras
+        // =================================================================
+        public sealed class ClashReport
+        {
+            public List<string> Lines = new List<string>();
+            public List<string> Clashes = new List<string>();
+            public bool Ok => Clashes.Count == 0;
+            public string Describe() => string.Join(Environment.NewLine, Lines.Concat(Clashes.Select(c => "CHOQUE: " + c))) +
+                                        (Ok ? Environment.NewLine + "angulos: 0 choques (hormigon, rejilla, barras)" : "");
+        }
+
+        /// <summary>
+        /// Comprueba cada angulo: el ala vertical no puede entrar en el fondo del foso ni el ala
+        /// horizontal en la cara opuesta (hormigon); la rejilla apoya sobre el ala sin solape;
+        /// y las alas (como chapas de espesor t) guardan distancia con todas las barras del
+        /// armado. Informa la cota del talon y la del apoyo de la rejilla.
+        /// </summary>
+        public ClashReport CheckClashes(BlockPlan rebar, double legFt, double thicknessFt)
+        {
+            var r = new ClashReport();
+            if (Error != null) { r.Lines.Add("sin angulos: " + Error); return r; }
+            double h = Mm(Type?.HeightMm ?? 38), t = thicknessFt;
+            double zTop = Topo.ZTop;
+            if (Angles.Count > 0)
+            {
+                double zh = Angles[0].ZHeel;
+                r.Lines.Add("talon del angulo en la cara del foso a " + ToMm(zTop - zh) + " mm bajo el tope (z interna " + ToMm(zh) + " mm); apoyo de la rejilla (cara superior del ala horizontal) a " +
+                            ToMm(zTop - zh) + " mm bajo el tope; rejilla de " + Num(Type?.HeightMm ?? 38) + " mm apoyada con su cara superior al ras del tope" +
+                            (Math.Abs((zTop - h) - zh) <= 1e-9 ? ", sin solape" : ": SOLAPE de " + ToMm(zh - (zTop - h)) + " mm"));
+                r.Lines.Add("ala vertical hasta " + ToMm(zTop - zh + legFt) + " mm bajo el tope; ala horizontal " + ToMm(legFt) + " mm hacia el foso");
+            }
+            int i = 0;
+            foreach (AngleBar a in Angles)
+            {
+                i++;
+                string name = "angulo " + i + " (" + AngleCategories.Name(a.Category) + ", foso " + (a.Recess + 1) + ")";
+                Recess rc = Topo.Recesses.FirstOrDefault(x => x.Index == a.Recess);
+                // hormigon: fondo del foso bajo el ala vertical
+                if (rc != null && a.ZHeel - legFt < rc.ZFloor - 1e-9)
+                    r.Clashes.Add(name + ": el ala vertical entra " + ToMm(rc.ZFloor - (a.ZHeel - legFt)) + " mm en el fondo del foso (profundidad " + ToMm(rc.Depth) + " mm < rejilla " + ToMm(h) + " + ala " + ToMm(legFt) + ")");
+                // hormigon: cara opuesta mas cerca que el ala horizontal
+                Pt tip = Geometry2D.Add(a.Mid, Geometry2D.Scale(a.Inward, legFt + _tol));
+                if (Topo.RegionAt(tip) != null || Topo.RecessAt(tip) == null)
+                    r.Clashes.Add(name + ": el ala horizontal de " + ToMm(legFt) + " mm llega al hormigon de la cara opuesta (foso mas estrecho que el ala)");
+                // rejilla: apoyo sin solape
+                if (a.ZHeel > zTop - h + 1e-9) r.Clashes.Add(name + ": la rejilla se solapa " + ToMm(a.ZHeel - (zTop - h)) + " mm con el ala horizontal");
+                // barras: alas como chapas (lineas cada 10 mm a lo largo de su anchura) contra cada tramo de barra
+                if (rebar != null && rebar.Error == null)
+                {
+                    double best = double.MaxValue; Family bestF = Family.F1; string bestWhere = "";
+                    var plates = new List<(P3 p, P3 q)>();
+                    double step = Mm(10);
+                    for (double z = a.ZHeel - legFt + 0.5 * t; z <= a.ZHeel - 0.5 * t + 1e-9; z += step)
+                    {
+                        Pt pa = Geometry2D.Add(a.A, Geometry2D.Scale(a.Inward, 0.5 * t)), pb = Geometry2D.Add(a.B, Geometry2D.Scale(a.Inward, 0.5 * t));
+                        plates.Add((new P3(pa, z), new P3(pb, z)));
+                    }
+                    for (double s = t; s <= legFt - 0.5 * t + 1e-9; s += step)
+                    {
+                        Pt pa = Geometry2D.Add(a.A, Geometry2D.Scale(a.Inward, s)), pb = Geometry2D.Add(a.B, Geometry2D.Scale(a.Inward, s));
+                        plates.Add((new P3(pa, a.ZHeel - 0.5 * t), new P3(pb, a.ZHeel - 0.5 * t)));
+                    }
+                    foreach (PlannedBar b in rebar.Bars)
+                        for (int k = 0; k + 1 < b.Points.Count; k++)
+                            foreach ((P3 p, P3 q) in plates)
+                            {
+                                double d = ClashCheck.SegmentDistance(p, q, b.Points[k], b.Points[k + 1], out _, out _) - 0.5 * b.D - 0.5 * t;
+                                if (d < best) { best = d; bestF = b.Family; bestWhere = b.Describe(); }
+                            }
+                    if (best < double.MaxValue)
+                    {
+                        if (best < -Mm(1)) r.Clashes.Add(name + ": choca con " + Families.Code(bestF) + " (" + ToMm(-best) + " mm de solape; " + bestWhere + ")");
+                        else r.Lines.Add(name + ": barra mas cercana " + Families.Code(bestF) + " a " + ToMm(best) + " mm libres");
+                    }
+                }
+            }
+            return r;
         }
 
         // =================================================================

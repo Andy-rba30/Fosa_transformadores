@@ -86,6 +86,8 @@ namespace BlockRebar
     {
         public bool Crossing;
         public double S, ZTop, Leg;
+        /// <summary>Cota del talon (cara superior del ala horizontal = apoyo de la rejilla).</summary>
+        public double ZHeel;
         /// <summary>+1 si el foso (y el ala horizontal) queda hacia +s, -1 hacia -s.</summary>
         public int Toward;
         public double S0, S1;
@@ -309,12 +311,12 @@ namespace BlockRebar
                 {
                     if ((ca <= line.Coord) == (cb <= line.Coord) && Math.Abs(ca - line.Coord) > 1e-9 && Math.Abs(cb - line.Coord) > 1e-9) continue;
                     double sInward = line.AlongU ? a.Inward.U : a.Inward.V;
-                    cut.Angles.Add(new SectionAngle { Crossing = true, S = line.AlongU ? a.A.U : a.A.V, ZTop = a.ZTop, Leg = legFt, Toward = sInward >= 0 ? 1 : -1, Angle = a });
+                    cut.Angles.Add(new SectionAngle { Crossing = true, S = line.AlongU ? a.A.U : a.A.V, ZTop = a.ZTop, ZHeel = a.ZHeel, Leg = legFt, Toward = sInward >= 0 ? 1 : -1, Angle = a });
                 }
                 else if (Math.Abs(ca - line.Coord) <= legFt)
                 {
                     double s0 = line.AlongU ? a.A.U : a.A.V, s1 = line.AlongU ? a.B.U : a.B.V;
-                    cut.Angles.Add(new SectionAngle { Crossing = false, S0 = Math.Min(s0, s1), S1 = Math.Max(s0, s1), ZTop = a.ZTop, Leg = legFt, Angle = a });
+                    cut.Angles.Add(new SectionAngle { Crossing = false, S0 = Math.Min(s0, s1), S1 = Math.Max(s0, s1), ZTop = a.ZTop, ZHeel = a.ZHeel, Leg = legFt, Angle = a });
                 }
             }
         }

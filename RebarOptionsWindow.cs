@@ -1318,7 +1318,13 @@ namespace BlockRebar
                             GridPlan gp = GridPlan.Build(tg, scratch.Grids, ac.Count == 1 ? ac[0].KgPerM : scratch.Grids.Angles.KgPerMDefault, item.GridTypeOverride);
                             sb.AppendLine("REJILLAS Y ANGULOS: " + gp.Describe() + (ac.Count == 1 ? " [angulo " + ac[0].Display + ", " + ac[0].KgSource + "]" : " [sin tipo de angulo cargado: " + ac.Count + " candidatos]"));
                             foreach (string w in gp.Warnings) sb.AppendLine("  aviso: " + w);
-                            if (gp.Error == null) { foreach (GridStrip st in gp.Strips) sb.AppendLine("  " + st.Describe()); foreach (AngleBar ab in gp.Angles) sb.AppendLine("  " + ab.Describe()); sb.AppendLine(gp.QuantityTable()); }
+                            if (gp.Error == null)
+                            {
+                                foreach (GridStrip st in gp.Strips) sb.AppendLine("  " + st.Describe());
+                                foreach (AngleBar ab in gp.Angles) sb.AppendLine("  " + ab.Describe());
+                                sb.AppendLine(gp.QuantityTable());
+                                sb.AppendLine(gp.CheckClashes(plan, BlockPlan.Mm(scratch.Grids.Angles.LegMm), BlockPlan.Mm(scratch.Grids.Angles.ThicknessMm)).Describe());
+                            }
                         }
                     }
                     catch (Exception ex) { sb.AppendLine("  ERROR en rejillas: " + ex.Message); }

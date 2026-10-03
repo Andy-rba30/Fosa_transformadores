@@ -276,18 +276,40 @@ namespace BlockRebar
                 FamilyParameter pW2 = fm.AddParameter("Peso por m2", GroupTypeId.General, SpecTypeId.MassPerUnitArea, false);
                 FamilyParameter pW = fm.AddParameter("Peso", GroupTypeId.General, SpecTypeId.Mass, false);
                 FamilyParameter pD = fm.AddParameter("Designacion", GroupTypeId.IdentityData, SpecTypeId.String.Text, false);
+                FamilyParameter pP = fm.AddParameter("Pieza", GroupTypeId.IdentityData, SpecTypeId.String.Text, true);   // P1, P2... por instancia (no se usa Mark)
 
                 double L0 = Mm(695), A0 = Mm(590), E0 = Mm(cfg.Types.Count > 0 ? cfg.Types[0].HeightMm : 38);
                 fm.Set(pL, L0); fm.Set(pA, A0); fm.Set(pE, E0);
                 fm.Set(pW2, UnitUtils.ConvertToInternalUnits(cfg.Types.Count > 0 ? cfg.Types[0].KgPerM2 : 31.0, UnitTypeId.KilogramsPerSquareMeter));
 
-                // 3. formula del peso (largo x ancho = area; area x masa por area = masa)
+                // 3. formula del peso. Tipos: Largo y Ancho = Length, Peso por m2 = MassPerUnitArea, Peso = Mass.
+                //    Revit no multiplica Area x MassPerUnitArea; si la forma directa falla se pasa por numeros adimensionales
+                //    con tres parametros unidad (1 m, 1 kg/m2, 1 kg): Number x Number x Number x Mass = Mass.
                 Step(3, "formula Peso = Largo * Ancho * Peso por m2");
-                try { fm.SetFormula(pW, "Largo * Ancho * Peso por m2"); }
-                catch (Exception ex)
+                var formulas = new List<string> { "Largo * Ancho * Peso por m2" };
+                bool formulaOk = false;
+                foreach (string formula in formulas)
                 {
-                    notes.Add("  aviso: no se pudo poner la formula de Peso (" + ex.Message + "); la familia sigue, el peso lo calcula el plugin");
+                    try { fm.SetFormula(pW, formula); formulaOk = true; notes.Add("  formula de Peso: " + formula); break; }
+                    catch (Exception ex) { notes.Add("  formula \"" + formula + "\" rechazada por Revit: " + ex.Message); }
                 }
+                if (!formulaOk)
+                {
+                    try
+                    {
+                        FamilyParameter uM = fm.AddParameter("Un metro", GroupTypeId.General, SpecTypeId.Length, false);
+                        FamilyParameter uA = fm.AddParameter("Un kg por m2", GroupTypeId.General, SpecTypeId.MassPerUnitArea, false);
+                        FamilyParameter uK = fm.AddParameter("Un kg", GroupTypeId.General, SpecTypeId.Mass, false);
+                        fm.Set(uM, UnitUtils.ConvertToInternalUnits(1, UnitTypeId.Meters));
+                        fm.Set(uA, UnitUtils.ConvertToInternalUnits(1, UnitTypeId.KilogramsPerSquareMeter));
+                        fm.Set(uK, UnitUtils.ConvertToInternalUnits(1, UnitTypeId.Kilograms));
+                        string formula = "(Largo / Un metro) * (Ancho / Un metro) * (Peso por m2 / Un kg por m2) * Un kg";
+                        try { fm.SetFormula(pW, formula); formulaOk = true; notes.Add("  formula de Peso (por numeros adimensionales): " + formula); }
+                        catch (Exception ex) { notes.Add("  formula \"" + formula + "\" rechazada por Revit: " + ex.Message); }
+                    }
+                    catch (Exception ex) { notes.Add("  no se pudieron crear los parametros unidad para la formula: " + ex.Message); }
+                }
+                if (!formulaOk) notes.Add("  AVISO: Peso queda sin formula (motivos arriba); el peso lo calcula el plugin en el informe");
 
                 // 4. planos de referencia de los cuatro lados y los centrales de la plantilla
                 Step(4, "planos de referencia");
@@ -364,13 +386,16 @@ namespace BlockRebar
                 {
                     ElementId matId = Material.Create(fam, "Rejilla");
                     var mat = fam.GetElement(matId) as Material;
-                    var fp = new FillPattern("Rejilla 30 mm", FillPatternTarget.Model, FillPatternHostOrientation.ToHost, 0, Mm(30));
+                    // platinas portantes: paralelas al ANCHO de la pieza (eje Y de la familia, de angulo a angulo), giran con la instancia (ToHost)
+                    var fp = new FillPattern("Rejilla 30 mm", FillPatternTarget.Model, FillPatternHostOrientation.ToHost, Math.PI / 2, Mm(30));
                     FillPatternElement fpe = FillPatternElement.Create(fam, fp);
                     if (mat != null)
                     {
+                        var dark = new Color(40, 40, 40);
                         mat.Color = new Color(110, 115, 120);
-                        mat.SurfaceForegroundPatternId = fpe.Id;
-                        mat.SurfaceForegroundPatternColor = new Color(40, 40, 40);
+                        mat.SurfaceForegroundPatternId = fpe.Id; mat.SurfaceForegroundPatternColor = dark;
+                        mat.CutForegroundPatternId = fpe.Id; mat.CutForegroundPatternColor = dark;   // mismo aspecto si la vista corta la pieza
+                        try { mat.UseRenderAppearanceForShading = false; } catch { }
                     }
                     Parameter mp = extr.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
                     if (mp != null && !mp.IsReadOnly) mp.Set(matId);
@@ -388,6 +413,7 @@ namespace BlockRebar
                     fm.Set(pE, Mm(t.HeightMm));
                     fm.Set(pL, L0); fm.Set(pA, A0);
                     try { fm.Set(pD, t.Designation ?? ""); } catch { }
+                    try { fm.Set(pP, ""); } catch { }
                 }
 
                 // 10. comprobacion: flexionar Largo y Ancho y ver que la caja de la extrusion cambia
@@ -456,25 +482,58 @@ namespace BlockRebar
                     FamilySymbol fs = angle.Symbol;
                     if (!fs.IsActive) fs.Activate();
                     double leg = Mm(g.Angles.LegMm);
+                    bool reverse = false; double extraRot = 0; bool calibrated = false;
                     int n = 0;
+                    double worstHeelS = 0, worstHeelZ = 0;
                     foreach (AngleBar a in plan.Angles)
                     {
                         try
                         {
-                            Pt oa = new Pt(a.A.U + a.Inward.U * 0.5 * leg, a.A.V + a.Inward.V * 0.5 * leg);
-                            Pt ob = new Pt(a.B.U + a.Inward.U * 0.5 * leg, a.B.V + a.Inward.V * 0.5 * leg);
-                            XYZ pa = f.World(oa.U, oa.V, a.ZTop - 0.5 * leg), pb = f.World(ob.U, ob.V, a.ZTop - 0.5 * leg);
-                            FamilyInstance fi = doc.Create.NewFamilyInstance(Line.CreateBound(pa, pb), fs, level, StructuralType.Beam);
-                            SetInt(fi, BuiltInParameter.Y_JUSTIFICATION, 2);   // centro
+                            FamilyInstance fi = null;
+                            AngleSection sec = null;
+                            for (int attempt = 0; attempt < 3; attempt++)
+                            {
+                                fi = CreateAngle(doc, f, fs, level, a, reverse, g.Angles.RotationDeg + extraRot, leg);
+                                doc.Regenerate();
+                                sec = MeasureAngle(doc, fi, f, a);
+                                if (sec == null) { res.Warnings.Add("angulo " + (n + 1) + ": no se pudo leer su geometria; se deja como esta"); break; }
+                                if (calibrated || sec.Empty == "PB") { calibrated = true; break; }
+                                // la esquina vacia dice como esta girado el perfil: se corrige invirtiendo la viga (espejo) y/o girando 180
+                                switch (sec.Empty)
+                                {
+                                    case "WB": reverse = !reverse; break;                  // espejo horizontal
+                                    case "PT": extraRot += 180; reverse = !reverse; break; // espejo vertical
+                                    default: extraRot += 180; break;                       // "WT": espejo doble
+                                }
+                                res.Lines.Add("angulo " + (n + 1) + ": esquina vacia en " + sec.Empty + "; se reorienta (" + (reverse ? "viga invertida" : "viga directa") + ", giro " + (g.Angles.RotationDeg + extraRot).ToString("0", CultureInfo.InvariantCulture) + ")");
+                                doc.Delete(fi.Id);
+                                fi = null;
+                            }
+                            if (fi == null) { fi = CreateAngle(doc, f, fs, level, a, reverse, g.Angles.RotationDeg + extraRot, leg); doc.Regenerate(); sec = MeasureAngle(doc, fi, f, a); }
+                            // posicionar por el talon: cara exterior del ala vertical en la cara del foso, cara superior del ala horizontal a ZHeel
+                            if (sec != null)
+                            {
+                                XYZ inwardW = Dir(f, new P3(a.Inward.U, a.Inward.V, 0));
+                                double zHeelAbs = f.ZBottom + a.ZHeel;
+                                XYZ delta = inwardW * (0 - sec.SMin) + XYZ.BasisZ * (zHeelAbs - sec.ZMax);
+                                if (delta.GetLength() > Mm(0.2)) { ElementTransformUtils.MoveElement(doc, fi.Id, delta); doc.Regenerate(); sec = MeasureAngle(doc, fi, f, a) ?? sec; }
+                                worstHeelS = Math.Max(worstHeelS, Math.Abs(sec.SMin));
+                                worstHeelZ = Math.Max(worstHeelZ, Math.Abs(sec.ZMax - zHeelAbs));
+                                if (sec.Empty != "PB") res.Warnings.Add("angulo " + (n + 1) + ": no se pudo orientar (esquina vacia en " + sec.Empty + "); revisa el giro de la seccion");
+                            }
+                            SetInt(fi, BuiltInParameter.Y_JUSTIFICATION, 2);   // origen: la linea de ubicacion queda donde se ha movido
                             SetInt(fi, BuiltInParameter.Z_JUSTIFICATION, 2);
-                            try { Parameter rot = fi.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE); if (rot != null && !rot.IsReadOnly) rot.Set(g.Angles.RotationDeg * Math.PI / 180); } catch { }
                             SetString(fi, BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, MarkerAngle + " " + hostTag + " " + AngleCategories.Key(a.Category) + " foso " + (a.Recess + 1));
                             res.Angles.Add(fi.Id);
                             n++;
                         }
                         catch (Exception ex) { res.Failed.Add(a.Describe() + ": " + ex.Message); }
                     }
+                    double zh = plan.Angles.Count > 0 ? plan.Angles[0].ZHeel : f.ZTop - f.ZBottom;
                     res.Lines.Add(n + " angulo(s) " + angle.Display + " (" + angle.KgPerM.ToString("0.00", CultureInfo.InvariantCulture) + " kg/m, " + angle.KgSource + ")");
+                    res.Lines.Add("talon (esquina exterior) en la cara del foso a " + ToMm(f.Thickness - zh) + " mm bajo el tope = apoyo de la rejilla (cara superior del ala horizontal); " +
+                                  "ala horizontal hacia el foso, ala vertical hacia abajo contra la pared. Comprobado sobre la geometria real: desviacion maxima del talon " +
+                                  ToMm(worstHeelS) + " mm en planta y " + ToMm(worstHeelZ) + " mm en altura" + (reverse || Math.Abs(extraRot) > 1e-9 ? " (perfil reorientado: " + (reverse ? "viga invertida" : "viga directa") + ", giro " + (g.Angles.RotationDeg + extraRot).ToString("0", CultureInfo.InvariantCulture) + ")" : ""));
                 }
             }
 
@@ -499,7 +558,7 @@ namespace BlockRebar
                             if (fi.Location is LocationPoint lp && Math.Abs(lp.Point.Z - loc.Z) > Mm(0.5))
                                 ElementTransformUtils.MoveElement(doc, fi.Id, new XYZ(0, 0, loc.Z - lp.Point.Z));
                             SetString(fi, BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, MarkerGrid + " " + hostTag + " " + p.Group + " foso " + (p.Recess + 1));
-                            try { Parameter mk = fi.get_Parameter(BuiltInParameter.ALL_MODEL_MARK); if (mk != null && !mk.IsReadOnly) mk.Set(p.Group); } catch { }
+                            if (!SetText(fi, "Pieza", p.Group) && res.Warnings.All(w => !w.Contains("\"Pieza\""))) res.Warnings.Add("la familia de rejilla no tiene el parametro de instancia de texto \"Pieza\": el grupo (P1, P2...) solo va en Comentarios");
                             res.Grids.Add(fi.Id);
                             n++;
                         }
@@ -510,6 +569,86 @@ namespace BlockRebar
             }
             else if (g.Mode == "countOnly" && plan.Pieces.Count > 0) res.Lines.Add(plan.Pieces.Count + " rejilla(s) solo contadas (modo informe)");
             return res;
+        }
+
+        /// <summary>Viga provisional a media ala del borde (hacia el foso) y media ala bajo el talon; se recoloca despues por su geometria real.</summary>
+        private static FamilyInstance CreateAngle(Document doc, BlockFrame f, FamilySymbol fs, Level level, AngleBar a, bool reverse, double rotDeg, double leg)
+        {
+            Pt oa = new Pt(a.A.U + a.Inward.U * 0.5 * leg, a.A.V + a.Inward.V * 0.5 * leg);
+            Pt ob = new Pt(a.B.U + a.Inward.U * 0.5 * leg, a.B.V + a.Inward.V * 0.5 * leg);
+            XYZ pa = f.World(oa.U, oa.V, a.ZHeel - 0.5 * leg), pb = f.World(ob.U, ob.V, a.ZHeel - 0.5 * leg);
+            Line line = reverse ? Line.CreateBound(pb, pa) : Line.CreateBound(pa, pb);
+            FamilyInstance fi = doc.Create.NewFamilyInstance(line, fs, level, StructuralType.Beam);
+            SetInt(fi, BuiltInParameter.Y_JUSTIFICATION, 2);
+            SetInt(fi, BuiltInParameter.Z_JUSTIFICATION, 2);
+            try { Parameter rot = fi.get_Parameter(BuiltInParameter.STRUCTURAL_BEND_DIR_ANGLE); if (rot != null && !rot.IsReadOnly) rot.Set(rotDeg * Math.PI / 180); } catch { }
+            return fi;
+        }
+
+        /// <summary>Seccion real del angulo en el sistema (s hacia el foso desde la cara, z absoluta) y la esquina vacia de la L (WT, PT, WB o PB).</summary>
+        private sealed class AngleSection
+        {
+            public double SMin, SMax, ZMin, ZMax;
+            public string Empty = "";
+        }
+
+        private static AngleSection MeasureAngle(Document doc, FamilyInstance fi, BlockFrame f, AngleBar a)
+        {
+            List<Solid> solids = BlockOutline.AllSolids(fi);
+            if (solids.Count == 0) return null;
+            XYZ inwardW = Dir(f, new P3(a.Inward.U, a.Inward.V, 0));
+            XYZ alongW = Dir(f, new P3(a.Dir.U, a.Dir.V, 0));
+            XYZ origin = f.World(a.Mid.U, a.Mid.V, 0);
+            var sec = new AngleSection { SMin = double.MaxValue, SMax = double.MinValue, ZMin = double.MaxValue, ZMax = double.MinValue };
+            foreach (Solid sol in solids)
+                foreach (Edge e in sol.Edges)
+                    foreach (XYZ p in e.AsCurve().Tessellate())
+                    {
+                        double sv = (p - origin).DotProduct(inwardW);
+                        sec.SMin = Math.Min(sec.SMin, sv); sec.SMax = Math.Max(sec.SMax, sv);
+                        sec.ZMin = Math.Min(sec.ZMin, p.Z); sec.ZMax = Math.Max(sec.ZMax, p.Z);
+                    }
+            if (sec.SMax - sec.SMin < Mm(5) || sec.ZMax - sec.ZMin < Mm(5)) return null;
+            double inset = Mm(3), half = 0.25 * a.Length;
+            var corners = new Dictionary<string, (double s, double z)>
+            {
+                { "WT", (sec.SMin + inset, sec.ZMax - inset) }, { "PT", (sec.SMax - inset, sec.ZMax - inset) },
+                { "WB", (sec.SMin + inset, sec.ZMin + inset) }, { "PB", (sec.SMax - inset, sec.ZMin + inset) }
+            };
+            foreach (var kv in corners)
+            {
+                XYZ c = origin + inwardW * kv.Value.s + XYZ.BasisZ * (kv.Value.z - origin.Z);
+                Line probe;
+                try { probe = Line.CreateBound(c - alongW * half, c + alongW * half); } catch { continue; }
+                double inside = 0;
+                foreach (Solid sol in solids)
+                {
+                    try
+                    {
+                        SolidCurveIntersection ix = sol.IntersectWithCurve(probe, new SolidCurveIntersectionOptions { ResultType = SolidCurveIntersectionMode.CurveSegmentsInside });
+                        if (ix != null) for (int i = 0; i < ix.SegmentCount; i++) inside += ix.GetCurveSegment(i).Length;
+                    }
+                    catch { }
+                }
+                if (inside < Mm(1)) { sec.Empty = kv.Key; break; }
+            }
+            if (sec.Empty == "") sec.Empty = "PB";   // perfil macizo o no legible: se asume correcto
+            return sec;
+        }
+
+        /// <summary>Direccion local (u, v, z) del bloque a direccion del modelo.</summary>
+        private static XYZ Dir(BlockFrame f, P3 n) => (f.DirU * n.U + f.DirV * n.V + XYZ.BasisZ * n.Z).Normalize();
+
+        private static bool SetText(FamilyInstance fi, string name, string value)
+        {
+            try
+            {
+                Parameter p = fi.LookupParameter(name);
+                if (p == null || p.IsReadOnly || p.StorageType != StorageType.String) return false;
+                p.Set(value ?? "");
+                return true;
+            }
+            catch { return false; }
         }
 
         private static void SetInt(FamilyInstance fi, BuiltInParameter bip, int v)

@@ -96,7 +96,8 @@ del plugin. **O se arma el bloque entero y bien, o no se arma**:
 4. Cualquier fallo deshace la subtransacción del elemento (incluido el borrado previo de la
    armadura anterior del plugin, que se conserva).
 5. **Comparación**: barras y longitudes leídas de Revit frente a la tabla prevista (con la
-   deducción de doblado del tipo); las diferencias se marcan en el informe.
+   deducción de doblado del tipo); las diferencias se marcan en el informe. El informe añade los diámetros de doblado leídos de cada tipo y el redondeo de longitudes del
+   proyecto (Configuración de refuerzo) para explicar diferencias de pocos mm por barra.
 
 Si un elemento ya tiene armadura del plugin, al pulsar Armar se pregunta si se borra antes de
 rearmar o se conserva (duplicando). El informe final lista, por elemento, la tabla de
@@ -114,7 +115,10 @@ rechazos; también queda en `%Temp%\BlockRebar.log`.
 - **Entrega 2c** (esta): vistas de sección A-A y B-B en Revit en las líneas de corte de la
   lámina (escala 1:20, detalle fino, recorte con margen, nombre `{marca} - Sección {letra}`,
   acero sin ocultar, una etiqueta por conjunto y familia si la familia de etiqueta está
-  cargada), al armar o con el botón "Crear solo las vistas de sección".
+  cargada), al armar o con el botón "Crear solo las vistas de sección". La etiqueta se intenta
+  con el tipo activado y la referencia al conjunto, en modo por categoría y con la referencia
+  geométrica de una barra en la vista; si todo falla, el informe da el motivo exacto de cada
+  intento.
 - **Fase 3** (esta): rejillas de foso y ángulos de borde (`GridPlan` puro + `GridGenerator`),
   ver abajo.
 
@@ -139,18 +143,36 @@ L = 3300).
   en su borde**, clasificados por {lado largo | lado corto} × {borde de núcleo | borde de
   murete} con longitud fija (3050 / 3050 / 2070 / 3400) o retiro (125 / 125 / 115 / 50); si la
   longitud fija no cabe pasa a retiro y avisa; si dos ángulos se tocaran en una esquina se
-  recortan con 10 mm de holgura y avisa. El eje de la viga va a media ala del borde y de la cara
-  superior, con el foso siempre a la izquierda de la viga (`rotationDeg` orienta las alas para
-  todos a la vez). Peso lineal del parámetro de tipo **W** (masa por longitud convertida con la
-  API, o número tomado como lb/ft: 4.10 = 6.10 kg/m); si no se lee, 6.10 kg/m. **Pernos de
-  expansión 1/2"**: 5 por ángulo, solo contados.
+  recortan con 10 mm de holgura y avisa. **Colocación por el talón** (Detalle 1 y Sección C del
+  plano): la esquina exterior del perfil en la cara del foso, a "alto de rejilla" (38 mm) bajo el
+  tope, ala horizontal hacia el foso (apoyo de la rejilla) y ala vertical hacia abajo con su cara
+  exterior contra la pared. La orientación se comprueba sobre la geometría real de la viga
+  (esquina vacía de la L) y se corrige invirtiendo la viga o girándola 180°; después se mueve por
+  su geometría hasta el talón, y el informe da la desviación medida. Peso lineal del parámetro
+  de tipo **W** (masa por longitud convertida con la API, o número tomado como lb/ft:
+  4.10 = 6.10 kg/m); si no se lee, 6.10 kg/m. **Pernos de expansión 1/2"**: 5 por ángulo, solo
+  contados. **Choques**: ala vertical contra el fondo del foso y ala horizontal contra la cara
+  opuesta (hormigón), rejilla sobre el ala sin solape, y alas (chapas de 6.35 mm) contra todas las
+  barras del armado; un choque rechaza el elemento. El informe da la cota del talón, la del
+  apoyo de la rejilla y la barra más cercana a cada ángulo.
 - Caso del plano (en `Tests/`): 8 ángulos (4 × 3050, 2 × 2070, 2 × 3400) = 23.14 m, 141.2 kg,
   40 pernos; 10 P1 de 695 × 590 (127.1 kg) y 8 P2 de 820 × 590 (120.0 kg).
-- Lámina: rejillas rayadas con su grupo y ángulos en planta y en las secciones (L en los
-  cortados, banda en los vistos a lo largo). Informe con metrado: m y kg de ángulo, pernos,
-  piezas, m² y kg de rejilla por grupo. Marca del plugin en Comentarios (`BlockRebar ANGLE host
-  <id>` / `BlockRebar GRID host <id>`), subtransacción por elemento, pregunta "borrar y
-  recolocar / conservar" si ya los tiene, botón **Borrar rejillas y ángulos del plugin**, Ctrl+Z.
+- Lámina: rejillas rayadas con su grupo y ángulos en planta y en las secciones (L con el talón
+  en la cara a la cota de apoyo en los cortados, banda en los vistos a lo largo). Informe con
+  metrado: m y kg de ángulo, pernos, piezas, m² y kg de rejilla por grupo. Cada rejilla lleva su
+  grupo (P1, P2…) en el parámetro de instancia de texto **Pieza** de la familia (Mark queda
+  vacío, sin avisos de duplicados) y en Comentarios. Marca del plugin en Comentarios
+  (`BlockRebar ANGLE host <id>` / `BlockRebar GRID host <id>`), subtransacción por elemento,
+  pregunta "borrar y recolocar / conservar" si ya los tiene, botón **Borrar rejillas y ángulos
+  del plugin**, Ctrl+Z.
+- Familia de rejilla: extrusión gobernada por Largo y Ancho (planos de referencia con cotas
+  etiquetadas e igualdad con los planos centrales, caras alineadas) y Espesor (asociado al fin
+  de extrusión), comprobada flexionando los parámetros al crearla; material "Rejilla" con patrón
+  de modelo de líneas cada 30 mm **a 90°** (las platinas portantes cruzan el foso, paralelas al
+  ancho de la pieza, y giran con la instancia) en superficie y corte con un solo color. La
+  fórmula Peso = Largo × Ancho × Peso por m2 se intenta en forma directa y, si Revit la rechaza,
+  por números adimensionales con tres parámetros unidad (1 m, 1 kg/m², 1 kg); el informe de
+  creación dice qué forma entró y el motivo exacto de cada rechazo.
 
 ## config.json
 

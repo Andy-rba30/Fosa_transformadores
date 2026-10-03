@@ -224,8 +224,10 @@ namespace BlockRebar
         /// <summary>Peso lineal si no se puede leer el parametro de tipo "W" (kg/m).</summary>
         [JsonPropertyName("kgPerMDefault")] public double KgPerMDefault { get; set; } = 6.10;
         [JsonPropertyName("boltsPerAngle")] public int BoltsPerAngle { get; set; } = 5;
-        /// <summary>Ala del angulo (mm): el eje de la viga va a media ala del borde y de la cara superior.</summary>
+        /// <summary>Ala del angulo (mm). El talon (esquina exterior) va en la cara del foso, a la altura de la rejilla bajo el tope.</summary>
         [JsonPropertyName("legMm")] public double LegMm { get; set; } = 63.5;
+        /// <summary>Espesor de las alas (mm), para las comprobaciones de choque.</summary>
+        [JsonPropertyName("thicknessMm")] public double ThicknessMm { get; set; } = 6.35;
         /// <summary>Giro de la seccion (grados) para orientar las alas; el foso queda siempre a la izquierda de la viga.</summary>
         [JsonPropertyName("rotationDeg")] public double RotationDeg { get; set; } = 0;
         /// <summary>Holgura entre angulos que se tocarian en una esquina (mm).</summary>
@@ -467,6 +469,7 @@ namespace BlockRebar
             if (a.KgPerMDefault <= 0) a.KgPerMDefault = 6.10;
             if (a.BoltsPerAngle < 0) a.BoltsPerAngle = 0;
             if (a.LegMm <= 0) a.LegMm = 63.5;
+            if (a.ThicknessMm <= 0) a.ThicknessMm = 6.35;
             if (a.CornerClearanceMm < 0) a.CornerClearanceMm = 0;
             foreach (AngleCategoryCfg c in new[] { a.LongCore, a.LongWall, a.ShortCore, a.ShortWall })
             {

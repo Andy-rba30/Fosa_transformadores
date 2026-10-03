@@ -132,14 +132,9 @@ namespace BlockRebar
                         string fam = FamilyOf(rb);
                         if (taggedFamilies.Contains(fam)) continue;
                         if (!Intersects(rb, tr, box)) continue;
-                        try
-                        {
-                            XYZ head = TagHead(rb, tr, box, i++, f.Thickness, margin);
-                            IndependentTag.Create(doc, tag.Id, view.Id, new Reference(rb), true, TagOrientation.Horizontal, head);
-                            taggedFamilies.Add(fam);
-                            tags++;
-                        }
-                        catch (Exception ex) { res.Warnings.Add("etiqueta de " + fam + " en " + name + ": " + ex.Message); }
+                        XYZ head = TagHead(rb, tr, box, i++, f.Thickness, margin);
+                        if (TryTag(doc, view, rb, tag, head, out string why)) { taggedFamilies.Add(fam); tags++; }
+                        else res.Warnings.Add("etiqueta de " + fam + " en " + name + ": " + why);
                     }
                     res.Tags += tags;
                     res.Lines.Add("vista \"" + name + "\" (id " + view.Id + "): corte " + letter + "-" + letter + " a " + (alongU ? "v = " : "u = ") +
@@ -172,6 +167,63 @@ namespace BlockRebar
                 }
             }
             return res;
+        }
+
+        /// <summary>
+        /// Etiqueta un conjunto probando, por orden: tipo activado + referencia al elemento;
+        /// modo por categoria y cambio de tipo; y la referencia geometrica de una barra del
+        /// conjunto en esa vista. Devuelve el motivo exacto de cada intento si todos fallan.
+        /// </summary>
+        private static bool TryTag(Document doc, View view, Rebar rb, TagType tag, XYZ head, out string why)
+        {
+            var reasons = new List<string>();
+            try
+            {
+                var fs = doc.GetElement(tag.Id) as FamilySymbol;
+                if (fs != null && !fs.IsActive) { fs.Activate(); doc.Regenerate(); }
+            }
+            catch (Exception ex) { reasons.Add("activar el tipo: " + ex.Message); }
+            try
+            {
+                IndependentTag.Create(doc, tag.Id, view.Id, new Reference(rb), true, TagOrientation.Horizontal, head);
+                why = null; return true;
+            }
+            catch (Exception ex) { reasons.Add("referencia al conjunto: " + ex.Message); }
+            try
+            {
+                IndependentTag t2 = IndependentTag.Create(doc, view.Id, new Reference(rb), true, TagMode.TM_ADDBY_CATEGORY, TagOrientation.Horizontal, head);
+                try { if (t2.GetTypeId() != tag.Id) t2.ChangeTypeId(tag.Id); } catch (Exception ex) { reasons.Add("cambiar al tipo elegido: " + ex.Message); }
+                why = null; return true;
+            }
+            catch (Exception ex) { reasons.Add("modo por categoria: " + ex.Message); }
+            try
+            {
+                Reference geo = null;
+                var opt = new Options { View = view, ComputeReferences = true, IncludeNonVisibleObjects = false };
+                foreach (GeometryObject go in rb.get_Geometry(opt))
+                {
+                    if (go is Curve cv && cv.Reference != null) { geo = cv.Reference; break; }
+                    if (go is Solid sol) foreach (Face fc in sol.Faces) if (fc.Reference != null) { geo = fc.Reference; break; }
+                    if (geo != null) break;
+                    if (go is GeometryInstance gi)
+                        foreach (GeometryObject g2 in gi.GetInstanceGeometry())
+                        {
+                            if (g2 is Curve c2 && c2.Reference != null) { geo = c2.Reference; break; }
+                            if (g2 is Solid s2) foreach (Face fc in s2.Faces) if (fc.Reference != null) { geo = fc.Reference; break; }
+                            if (geo != null) break;
+                        }
+                    if (geo != null) break;
+                }
+                if (geo == null) reasons.Add("referencia geometrica: el conjunto no tiene geometria con referencia en la vista (no esta visible en ella?)");
+                else
+                {
+                    IndependentTag.Create(doc, tag.Id, view.Id, geo, true, TagOrientation.Horizontal, head);
+                    why = null; return true;
+                }
+            }
+            catch (Exception ex) { reasons.Add("referencia geometrica: " + ex.Message); }
+            why = string.Join(" | ", reasons);
+            return false;
         }
 
         private static ViewFamilyType FindViewType(Document doc, string name, out string warn)

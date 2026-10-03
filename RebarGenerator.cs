@@ -39,6 +39,7 @@ namespace BlockRebar
         /// <summary>Lineas de la comparacion entre lo previsto y lo leido de Revit.</summary>
         public List<string> Comparison = new List<string>();
         public bool ComparisonOk = true;
+        public string RoundingNote = "";
         public int Bars;
         public Dictionary<Family, int> ByFamily = new Dictionary<Family, int>();
         public bool Safe => Rejected.Count == 0;
@@ -254,6 +255,7 @@ namespace BlockRebar
                 if (rb == null) { res.Rejected.Add(cs.Name + ": el conjunto no existe tras regenerar"); continue; }
                 if (!RealInside(f, f.CheckSolids, rb, cs, out string why)) res.Rejected.Add(cs.Name + ": " + why);
             }
+            res.RoundingNote = RoundingNote(doc);
             if (res.Safe) Compare(res);
         }
 
@@ -310,6 +312,32 @@ namespace BlockRebar
                     real, (realLen * 0.3048).ToString("0.00", CultureInfo.InvariantCulture), notes.Count == 0 ? "OK" : string.Join("; ", notes)));
             }
             res.Comparison.Add("L prev. = polilinea prevista; L esper. = con la deduccion de doblado del tipo (lo que debe medir Revit); tolerancia 1 % o 5 mm por barra.");
+            // datos para explicar las diferencias: diametros de doblado leidos de cada tipo y redondeo de longitudes del proyecto
+            foreach (var kv in plan.UsedFamilies.SelectMany(f => plan.Bars.Where(b => b.Family == f).Select(b => b.Layer).Distinct().Select(l => (f, l))))
+            {
+                FamilyDiam fd = plan.Diam.Get(kv.f, kv.l);
+                if (fd == null) continue;
+                res.Comparison.Add("  " + Families.Code(kv.f) + (kv.l != "" ? "(" + kv.l + ")" : "") + " tipo " + fd.Label + ": d = " + BlockPlan.Dia(fd.D) + " mm, doblado estandar leido = " +
+                                   (fd.BendInside > 0 ? ToMm(fd.BendInside) + " mm" : "0 (no leido: se asume 6 d = " + ToMm(6 * fd.D) + " mm)") + ", doblado de estribo = " +
+                                   (fd.TieBendInside > 0 ? ToMm(fd.TieBendInside) + " mm" : "0 (se asume " + ToMm(fd.TieBend) + " mm)"));
+            }
+            if (!string.IsNullOrEmpty(res.RoundingNote)) res.Comparison.Add("  " + res.RoundingNote);
+        }
+
+        /// <summary>Redondeo de longitudes de barra del proyecto (Configuracion de refuerzo): explica diferencias de unos mm por barra.</summary>
+        public static string RoundingNote(Document doc)
+        {
+            try
+            {
+                ReinforcementSettings rs = ReinforcementSettings.GetReinforcementSettings(doc);
+                RebarRoundingManager rm = rs.GetRebarRoundingManager();
+                double seg = UnitUtils.ConvertFromInternalUnits(rm.ApplicableSegmentLengthRounding, UnitTypeId.Millimeters);
+                double tot = UnitUtils.ConvertFromInternalUnits(rm.ApplicableTotalLengthRounding, UnitTypeId.Millimeters);
+                return "redondeo de longitudes del proyecto: tramos a " + seg.ToString("0.#", CultureInfo.InvariantCulture) + " mm (" + rm.ApplicableSegmentLengthRoundingMethod + "), total a " +
+                       tot.ToString("0.#", CultureInfo.InvariantCulture) + " mm (" + rm.ApplicableTotalLengthRoundingMethod + "), origen " + rm.ApplicableReinforcementRoundingSource +
+                       (seg > 0 || tot > 0 ? ". Con redondeo activo, la longitud real de cada tramo/barra puede diferir hasta ese valor de la geometrica." : ".");
+            }
+            catch (Exception ex) { return "redondeo de longitudes: no se pudo leer (" + ex.Message + ")"; }
         }
 
         /// <summary>
