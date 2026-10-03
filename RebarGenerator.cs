@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -51,15 +52,19 @@ namespace BlockRebar
     /// <summary>
     /// Crea los Rebar del bloque a partir del BlockPlan (la misma clase pura que dibuja la
     /// lamina): cada conjunto con CreateFromCurves (polilinea con sus patas, sin ganchos),
-    /// repartido como array (SetLayoutAsFixedNumber), con Particion y un comentario con la
-    /// marca del plugin para poder borrarlo despues. Dos redes de seguridad: antes de crear,
+    /// repartido como array (SetLayoutAsFixedNumber), con la Particion del contrato ARBA y
+    /// "ARBA - Origen" = BLOQUES / "ARBA - Codigo" = F# para poder encontrarlo y borrarlo despues
+    /// (ya no se escribe Comentarios; el comentario antiguo solo se lee como respaldo). Dos redes de seguridad: antes de crear,
     /// cada posicion prevista se comprueba dentro del hormigon; despues de crear y regenerar,
     /// se lee la geometria real (radios de doblado y todas las posiciones) y se vuelve a
     /// comprobar; ademas se comparan cantidades y longitudes reales con las previstas.
     /// </summary>
     public static class RebarGenerator
     {
-        /// <summary>Marca del plugin en el parametro Comentarios de cada conjunto.</summary>
+        /// <summary>
+        /// Marca antigua del plugin en el parametro Comentarios ("BlockRebar F#"). Desde el contrato ARBA ya no se
+        /// escribe: solo sirve para reconocer (y borrar) conjuntos de modelos armados con versiones anteriores.
+        /// </summary>
         public const string Marker = "BlockRebar";
         private const double MinSeg = 0.003;   // ~1 mm en pies
         /// <summary>Longitud de barra que se tolera fuera del solido al comprobar (pies, ~1 mm).</summary>
@@ -181,7 +186,7 @@ namespace BlockRebar
                 return true;
             }
 
-            Finish(c.Doc, rb, c.Item.Partition(c.Cfg, Families.Name(b.Family), Families.Code(b.Family), b.Layer), b.Family);
+            Finish(c.Doc, rb, c.Item.Host, c.Item.Partition(c.Cfg, Families.Name(b.Family), Families.Code(b.Family), b.Layer), b.Family);
             c.Result.Created.Add(new CreatedSet
             {
                 Id = rb.Id, Name = name, Family = b.Family, Layer = b.Layer, Radius = r, Count = g.Count,
@@ -429,26 +434,38 @@ namespace BlockRebar
             }
         }
 
-        private static void Finish(Document doc, Rebar r, string partition, Family family)
+        /// <summary>
+        /// Particion del contrato (ArbaPartition.Write: NUMBER_PARTITION_PARAM y, si no, por nombre en ingles y
+        /// espanol), "ARBA - Origen" = BLOQUES, "ARBA - Codigo" = F# y "Metrado - Elemento" = CIMIENTOS
+        /// (ArbaOrigin.WriteFor). Los parametros compartidos deben existir (ArbaSharedParams.EnsureAll en el comando).
+        /// </summary>
+        private static void Finish(Document doc, Rebar r, Element host, string partition, Family family)
         {
-            if (!string.IsNullOrEmpty(partition))
-            {
-                Parameter p = null;
-                try { p = r.get_Parameter(BuiltInParameter.NUMBER_PARTITION_PARAM); } catch { }
-                if (p == null) p = r.LookupParameter("Partition") ?? r.LookupParameter("Particion") ?? r.LookupParameter("Partición");
-                if (p != null && !p.IsReadOnly) { try { p.Set(partition); } catch { } }
-            }
-            try
-            {
-                Parameter cm = r.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS);
-                if (cm != null && !cm.IsReadOnly) cm.Set(Marker + " " + Families.Code(family));
-            }
-            catch { }
+            try { ArbaPartition.Write(r, partition); } catch (Exception ex) { Log.Error("Finish particion", ex); }
+            try { ArbaOrigin.WriteFor(r, host, ArbaContract.Bloques, Families.Code(family)); } catch (Exception ex) { Log.Error("Finish origen", ex); }
             try { r.SetUnobscuredInView(doc.ActiveView, true); } catch { }
         }
 
-        /// <summary>Conjuntos de armadura del elemento creados por el plugin (comentario que empieza por la marca).</summary>
+        /// <summary>
+        /// Conjuntos de armadura del elemento creados por el plugin: los que llevan "ARBA - Origen" = BLOQUES
+        /// (contrato) mas, por compatibilidad con modelos no migrados, los que llevan el comentario antiguo.
+        /// </summary>
         public static List<ElementId> FindPluginRebars(Document doc, Element host)
+        {
+            var ids = new List<ElementId>();
+            try
+            {
+                foreach (Element e in ArbaOrigin.Find(doc, ArbaContract.Bloques, host))
+                    if (ArbaPartition.IsRebar(e) && !ids.Contains(e.Id)) ids.Add(e.Id);
+            }
+            catch (Exception ex) { Log.Error("FindPluginRebars (origen)", ex); }
+            foreach (ElementId id in FindLegacyRebars(doc, host))
+                if (!ids.Contains(id)) ids.Add(id);
+            return ids;
+        }
+
+        /// <summary>Respaldo: conjuntos del elemento con el comentario antiguo del plugin ("BlockRebar F#").</summary>
+        public static List<ElementId> FindLegacyRebars(Document doc, Element host)
         {
             var ids = new List<ElementId>();
             try
@@ -462,16 +479,35 @@ namespace BlockRebar
                     if (cm.StartsWith(Marker, StringComparison.OrdinalIgnoreCase)) ids.Add(rb.Id);
                 }
             }
-            catch (Exception ex) { Log.Error("FindPluginRebars", ex); }
+            catch (Exception ex) { Log.Error("FindLegacyRebars", ex); }
             return ids;
         }
 
-        /// <summary>Borra los conjuntos del plugin del elemento (dentro de una transaccion abierta). Devuelve cuantos.</summary>
+        /// <summary>
+        /// Borra los conjuntos del plugin del elemento (dentro de una transaccion abierta): los del contrato
+        /// (ArbaOrigin.Find filtrado a armaduras: las rejillas y angulos los borra GridGenerator) y los del comentario antiguo. Devuelve cuantos conjuntos; <paramref name="bars"/> suma las barras.
+        /// </summary>
         public static int DeletePluginRebars(Document doc, Element host, out int bars)
         {
             int n = 0; bars = 0;
-            foreach (ElementId id in FindPluginRebars(doc, host))
+            try
             {
+                // solo armaduras: las rejillas y angulos con origen BLOQUES los borra GridGenerator
+                foreach (Element e in ArbaOrigin.Find(doc, ArbaContract.Bloques, host).Where(ArbaPartition.IsRebar).ToList())
+                {
+                    try
+                    {
+                        if (e is Rebar rb) { try { bars += rb.NumberOfBarPositions; } catch { } }
+                        doc.Delete(e.Id);
+                        n++;
+                    }
+                    catch (Exception ex) { Log.Error("DeletePluginRebars (origen) " + e.Id, ex); }
+                }
+            }
+            catch (Exception ex) { Log.Error("DeletePluginRebars (origen)", ex); }
+            foreach (ElementId id in FindLegacyRebars(doc, host))
+            {
+                if (doc.GetElement(id) == null) continue;   // ya borrado por el origen
                 try
                 {
                     if (doc.GetElement(id) is Rebar rb) { try { bars += rb.NumberOfBarPositions; } catch { } }

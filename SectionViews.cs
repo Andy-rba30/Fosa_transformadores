@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -255,9 +256,15 @@ namespace BlockRebar
             return name + " " + Guid.NewGuid().ToString("N").Substring(0, 6);
         }
 
-        /// <summary>Familia del armado (F1...F8) por el comentario del plugin; vacio si no lo lleva.</summary>
+        /// <summary>Familia del armado (F1...F8): "ARBA - Codigo" del contrato y, como respaldo en modelos antiguos, el comentario del plugin; si no, el Id.</summary>
         private static string FamilyOf(Rebar rb)
         {
+            try
+            {
+                string code = ArbaOrigin.CodeOf(rb);
+                if (code.Length > 0) return code;
+            }
+            catch { }
             try
             {
                 string cm = rb.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";

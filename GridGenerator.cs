@@ -6,6 +6,7 @@ using System.Linq;
 using Autodesk.Revit.ApplicationServices;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -13,12 +14,21 @@ namespace BlockRebar
     /// Capa Revit de las rejillas de foso: angulos de borde como Structural Framing (viga
     /// por linea, con el foso siempre a la izquierda de la viga), rejillas como Generic Model
     /// (Largo, Ancho, Espesor de instancia), familia de rejilla generada desde la plantilla
-    /// Generic Model, marca del plugin en Comentarios, busqueda y borrado.
+    /// Generic Model, familia de rejilla generada desde la plantilla Generic Model, marca del contrato ARBA
+    /// ("ARBA - Origen" = BLOQUES, "ARBA - Codigo" = "REJILLA P1" / "ANGULO longCore", "ARBA - Anfitrion" = Id del
+    /// bloque) y metrado de miscelaneos (partida, material, peso, pernos, "Metrado - Elemento" = MISCELANEOS),
+    /// busqueda y borrado. El comentario antiguo ("BlockRebar GRID host <id> ...") ya no se escribe; solo se lee
+    /// como respaldo en modelos de versiones anteriores.
     /// </summary>
     public static class GridGenerator
     {
+        /// <summary>Marcas antiguas en Comentarios (solo lectura, respaldo para modelos no migrados).</summary>
         public const string MarkerAngle = RebarGenerator.Marker + " ANGLE";
         public const string MarkerGrid = RebarGenerator.Marker + " GRID";
+        /// <summary>Prefijos de "ARBA - Codigo" de los elementos que no son armadura.</summary>
+        public const string CodeAngle = "ANGULO";
+        public const string CodeGrid = "REJILLA";
+        private const double FtToM = 0.3048;
         private static double Mm(double mm) => BlockPlan.Mm(mm);
         private static double ToMm(double ft) => BlockPlan.ToMm(ft);
 
@@ -472,8 +482,6 @@ namespace BlockRebar
             if (plan.Error != null) throw new InvalidOperationException(plan.Error);
             GridsCfg g = cfg.Grids;
             Level level = LevelFor(doc, f.ZBottom + f.ZTop - f.ZBottom);
-            string hostTag = "host " + item.Host.Id;
-
             if (g.Angles.Enabled)
             {
                 if (angle == null) res.Warnings.Add("sin tipo de angulo: no se colocan angulos (" + plan.Angles.Count + " previstos)");
@@ -523,7 +531,9 @@ namespace BlockRebar
                             }
                             SetInt(fi, BuiltInParameter.Y_JUSTIFICATION, 2);   // origen: la linea de ubicacion queda donde se ha movido
                             SetInt(fi, BuiltInParameter.Z_JUSTIFICATION, 2);
-                            SetString(fi, BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, MarkerAngle + " " + hostTag + " " + AngleCategories.Key(a.Category) + " foso " + (a.Recess + 1));
+                            // contrato ARBA: origen, codigo, anfitrion y metrado del miscelaneo (m x kg/m, pernos)
+                            ArbaOrigin.WriteFor(fi, item.Host, ArbaContract.Bloques, CodeAngle + " " + AngleCategories.Key(a.Category));
+                            ArbaMetrado.WriteMiscelaneo(fi, ArbaContract.PartidaAngulos, a.Length * FtToM * angle.KgPerM, g.Angles.BoltsPerAngle);
                             res.Angles.Add(fi.Id);
                             n++;
                         }
@@ -557,8 +567,11 @@ namespace BlockRebar
                             SetLen(fi, "Largo", p.Length); SetLen(fi, "Ancho", p.Width); SetLen(fi, "Espesor", h);
                             if (fi.Location is LocationPoint lp && Math.Abs(lp.Point.Z - loc.Z) > Mm(0.5))
                                 ElementTransformUtils.MoveElement(doc, fi.Id, new XYZ(0, 0, loc.Z - lp.Point.Z));
-                            SetString(fi, BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS, MarkerGrid + " " + hostTag + " " + p.Group + " foso " + (p.Recess + 1));
-                            if (!SetText(fi, "Pieza", p.Group) && res.Warnings.All(w => !w.Contains("\"Pieza\""))) res.Warnings.Add("la familia de rejilla no tiene el parametro de instancia de texto \"Pieza\": el grupo (P1, P2...) solo va en Comentarios");
+                            // contrato ARBA: origen, codigo "REJILLA P1", anfitrion y metrado del miscelaneo (m2 x kg/m2)
+                            ArbaOrigin.WriteFor(fi, item.Host, ArbaContract.Bloques, CodeGrid + " " + p.Group);
+                            double areaM2 = p.Length * FtToM * p.Width * FtToM;
+                            ArbaMetrado.WriteMiscelaneo(fi, ArbaContract.PartidaRejillas, areaM2 * plan.Type.KgPerM2, null);
+                            if (!SetText(fi, "Pieza", p.Group) && res.Warnings.All(w => !w.Contains("\"Pieza\""))) res.Warnings.Add("la familia de rejilla no tiene el parametro de instancia de texto \"Pieza\": el grupo (P1, P2...) solo va en \"ARBA - Codigo\"");
                             res.Grids.Add(fi.Id);
                             n++;
                         }
@@ -656,11 +669,6 @@ namespace BlockRebar
             try { Parameter p = fi.get_Parameter(bip); if (p != null && !p.IsReadOnly) p.Set(v); } catch { }
         }
 
-        private static void SetString(Element e, BuiltInParameter bip, string v)
-        {
-            try { Parameter p = e.get_Parameter(bip); if (p != null && !p.IsReadOnly) p.Set(v); } catch { }
-        }
-
         private static void SetLen(FamilyInstance fi, string name, double ft)
         {
             Parameter p = fi.LookupParameter(name);
@@ -672,7 +680,27 @@ namespace BlockRebar
         // =================================================================
         // Busqueda y borrado
         // =================================================================
+        /// <summary>
+        /// Angulos y rejillas del elemento colocados por el plugin: los que llevan "ARBA - Origen" = BLOQUES y
+        /// "ARBA - Anfitrion" = Id del bloque (contrato; no armaduras) mas, por compatibilidad con modelos no
+        /// migrados, los que llevan el comentario antiguo con "host <id>".
+        /// </summary>
         public static List<ElementId> FindPluginItems(Document doc, Element host)
+        {
+            var ids = new List<ElementId>();
+            try
+            {
+                foreach (Element e in ArbaOrigin.Find(doc, ArbaContract.Bloques, host))
+                    if (!ArbaPartition.IsRebar(e) && !ids.Contains(e.Id)) ids.Add(e.Id);
+            }
+            catch (Exception ex) { Log.Error("FindPluginItems (origen)", ex); }
+            foreach (ElementId id in FindLegacyItems(doc, host))
+                if (!ids.Contains(id)) ids.Add(id);
+            return ids;
+        }
+
+        /// <summary>Respaldo: ejemplares con el comentario antiguo del plugin ("BlockRebar ANGLE/GRID host <id> ...").</summary>
+        public static List<ElementId> FindLegacyItems(Document doc, Element host)
         {
             var ids = new List<ElementId>();
             string hostTag = "host " + host.Id;
@@ -686,10 +714,24 @@ namespace BlockRebar
                         ids.Add(fi.Id);
                 }
             }
-            catch (Exception ex) { Log.Error("FindPluginItems", ex); }
+            catch (Exception ex) { Log.Error("FindLegacyItems", ex); }
             return ids;
         }
 
+        /// <summary>True si el elemento es un angulo del plugin: "ARBA - Codigo" empieza por ANGULO o, en modelos antiguos, el comentario por la marca de angulo.</summary>
+        public static bool IsAngle(Element e)
+        {
+            if (e == null) return false;
+            string code = "";
+            try { code = ArbaOrigin.CodeOf(e); } catch { }
+            if (code.StartsWith(CodeAngle, StringComparison.OrdinalIgnoreCase)) return true;
+            if (code.StartsWith(CodeGrid, StringComparison.OrdinalIgnoreCase)) return false;
+            string cm = "";
+            try { cm = e.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? ""; } catch { }
+            return cm.StartsWith(MarkerAngle, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>Borra los angulos y rejillas del plugin del elemento (dentro de una transaccion abierta). Devuelve cuantos.</summary>
         public static int DeletePluginItems(Document doc, Element host, out int angles, out int grids)
         {
             angles = 0; grids = 0;
@@ -697,9 +739,11 @@ namespace BlockRebar
             {
                 try
                 {
-                    string cm = doc.GetElement(id)?.get_Parameter(BuiltInParameter.ALL_MODEL_INSTANCE_COMMENTS)?.AsString() ?? "";
+                    Element e = doc.GetElement(id);
+                    if (e == null) continue;
+                    bool isAngle = IsAngle(e);
                     doc.Delete(id);
-                    if (cm.StartsWith(MarkerAngle, StringComparison.OrdinalIgnoreCase)) angles++; else grids++;
+                    if (isAngle) angles++; else grids++;
                 }
                 catch (Exception ex) { Log.Error("DeletePluginItems " + id, ex); }
             }

@@ -84,8 +84,10 @@ choques (`ClashCheck`) y de separaciones reales (`CheckSpacing`) están descrito
 
 Cada conjunto del plan se crea con `Rebar.CreateFromCurves` (polilínea con sus patas como
 tramos; F7 con estilo estribo/horquilla), se reparte como **array** (`SetLayoutAsFixedNumber`)
-y recibe la **Partición** de la plantilla y un comentario `BlockRebar F#` que lo marca como
-del plugin. **O se arma el bloque entero y bien, o no se arma**:
+y recibe la **Partición** del contrato ARBA (`CIMIENTOS - BLQ-{marca}-F#`, ver "Contrato
+ARBA-comun") más `ARBA - Origen = BLOQUES`, `ARBA - Código = F#` y `Metrado - Elemento =
+CIMIENTOS`, que lo marcan como del plugin (ya no se escribe Comentarios). **O se arma el
+bloque entero y bien, o no se arma**:
 
 1. **Plan**: si `ClashCheck` encuentra algún choque previsto, el elemento se rechaza antes de
    crear nada.
@@ -161,10 +163,15 @@ L = 3300).
   en la cara a la cota de apoyo en los cortados, banda en los vistos a lo largo). Informe con
   metrado: m y kg de ángulo, pernos, piezas, m² y kg de rejilla por grupo. Cada rejilla lleva su
   grupo (P1, P2…) en el parámetro de instancia de texto **Pieza** de la familia (Mark queda
-  vacío, sin avisos de duplicados) y en Comentarios. Marca del plugin en Comentarios
-  (`BlockRebar ANGLE host <id>` / `BlockRebar GRID host <id>`), subtransacción por elemento,
-  pregunta "borrar y recolocar / conservar" si ya los tiene, botón **Borrar rejillas y ángulos
-  del plugin**, Ctrl+Z.
+  vacío, sin avisos de duplicados) y en `ARBA - Código` (`REJILLA P1`). Marca del plugin con los
+  parámetros compartidos del contrato: `ARBA - Origen = BLOQUES`, `ARBA - Código` (`REJILLA P1`
+  / `ANGULO longCore`), `ARBA - Anfitrión` (Id del bloque) y el **metrado de misceláneos**:
+  `Metrado - Partida` (`ESTRUCTURAS METÁLICAS - REJILLAS` / `… - ÁNGULOS`), `Metrado - Material
+  = ACERO ESTRUCTURAL`, `Metrado - Peso (kg)` (rejilla m² × kg/m²; ángulo m × kg/m, los mismos
+  kg del informe), `Metrado - Pernos (und)` (`boltsPerAngle`, solo ángulos) y `Metrado -
+  Elemento = MISCELANEOS`, con lo que el plugin de metrados los lleva a la tabla "Metrado acero
+  estructural - Misceláneos" sin tocar su peso. Subtransacción por elemento, pregunta "borrar y
+  recolocar / conservar" si ya los tiene, botón **Borrar rejillas y ángulos del plugin**, Ctrl+Z.
 - Familia de rejilla: extrusión gobernada por Largo y Ancho (planos de referencia con cotas
   etiquetadas e igualdad con los planos centrales, caras alineadas) y Espesor (asociado al fin
   de extrusión), comprobada flexionando los parámetros al crearla; material "Rejilla" con patrón
@@ -179,20 +186,60 @@ L = 3300).
 Claves exactas (valores del plano): `coverBottomMm` 75, `coverTopMm` 50, `coverEdgeMm` 75,
 `coverWallMm` 40, `wallMaxWidthMm` 300, `direction`, `F1_bottomMesh`, `F2_recessMesh`,
 `F3_topMesh`, `F4_recessFaceL`, `F5_recessFaceH`, `F6_wallVertical`, `F7_wallHairpin`,
-`F8_wallHoriz`, `partitionTemplate` (`BLQ-{marca}-{familia}`), `toleranceMm`,
+`F8_wallHoriz`, `partitionTemplate` (`{categoria} - {prefijo}-{marca}-{codigo}`), `toleranceMm`,
 `minBarLengthMm`, `levelReference` (`shared` / `project` / `internal`), `preview`,
 `sectionViews`. Cada capa lleva `barTypeName` (exacto o fragmento, `"5/8\""`), `spacingMm` y
 `layoutMode` (`maxSpacing` o `fromTop`). Sin coincidencia de tipo no se arma; nunca se
 sustituye por otro tipo.
 
+## Contrato ARBA-comun
+
+El add-in integra el código común de los add-ins ARBA, **ARBA-comun**
+(https://github.com/Andy-rba30/ARBA-comun, etiqueta `v1.0.0`), como **submódulo git** en
+`external/ARBA-comun`. `BlockRebar.csproj` importa `external/ARBA-comun/Arba.Comun.props`, que
+compila `src/**/*.cs` dentro de `BlockRebar.dll` (clases `internal` del namespace `Arba.Comun`;
+nunca una DLL compartida). No se modifica nada dentro del submódulo: lo que falte se anota en
+`NOTAS-ARBA-COMUN.md`. Lo que aporta (ver `external/ARBA-comun/CONTRATO.md`):
+
+- **Cinta**: `ArbaRibbon` común (pestaña ARBA, paneles IA / Acero / Metrados / Encofrado en ese
+  orden, un solo desplegable **Acero**); el botón conserva el nombre interno `ARBA_Acero_Bloques`.
+  También `RevitTheme`, `PartitionName` y `NameMatch` comunes (los archivos propios se borraron).
+- **Partición** `{categoria} - {prefijo}-{marca}-{codigo}`: la categoría la deduce del anfitrión
+  (bloques = `CIMIENTOS`), el prefijo es `BLQ` y `{codigo}` es la familia F1…F8 →
+  `CIMIENTOS - BLQ-FT-01-F4`. **Cambio de significado**: `{familia}` es ahora la familia de Revit
+  (como en los demás add-ins) y el código F1…F8 es `{codigo}`. Una `config.json` con la plantilla
+  antigua `BLQ-{marca}-{familia}` se convierte al cargar y el informe lo avisa; la ventana avisa
+  si la plantilla no empieza por `{categoria} - {prefijo}-` y muestra en el pie la versión del
+  contrato (`ArbaContract.Version`).
+- **Parámetros compartidos** (GUID fijo, de ejemplar, grupo Datos): al armar o colocar rejillas,
+  `ArbaSharedParams.EnsureAll` crea o completa los ocho (`ARBA - Origen`, `ARBA - Código`,
+  `ARBA - Anfitrión`, `Metrado - Partida`, `Metrado - Material`, `Metrado - Peso (kg)`,
+  `Metrado - Pernos (und)`, `Metrado - Elemento`) desde un archivo temporal, restaurando el
+  archivo de parámetros compartidos del usuario; los avisos van al informe.
+- **Origen en vez de Comentarios**: las barras llevan `ARBA - Origen = BLOQUES`, `ARBA - Código
+  = F#`; rejillas y ángulos además `ARBA - Anfitrión` y el metrado de misceláneos. Encontrar,
+  borrar y rearmar usan `ArbaOrigin.Find / Delete`; por compatibilidad, los modelos armados con
+  versiones anteriores (comentario `BlockRebar F#` / `BlockRebar GRID|ANGLE host <id>`) se siguen
+  reconociendo y borrando por el comentario.
+- **Migración sin rearmar**: si un bloque tiene armadura del plugin anterior al contrato
+  (partición `BLQ-…` sin origen), la pregunta "borrar y rearmar / conservar" ofrece un tercer
+  botón **Migrar la armadura antigua al contrato (sin rearmar)** (`ArbaMigration.MigrateHost`):
+  partición `CIMIENTOS - BLQ-…-F#`, origen, código y `Metrado - Elemento`, Ctrl+Z lo deshace.
+
 ## Compilar e instalar
 
 Requiere el SDK de .NET 10 y Revit 2027.2 (paquetes `Nice3point.Revit.Api.*` 2027.2 y
-`Clipper2`).
+`Clipper2`). El submódulo tiene que estar inicializado:
 
 ```
+git clone --recurse-submodules https://github.com/Andy-rba30/Fosa_transformadores
+# o, en un clon ya hecho:
+git submodule update --init
 dotnet build -c Debug
 ```
+
+Para subir de versión del contrato: `git -C external/ARBA-comun checkout v1.1.0` y commit del
+puntero del submódulo.
 
 En Debug la compilación copia `BlockRebar.dll`, `Clipper2Lib.dll`, `config.json` y
 `BlockRebar.pdb` a `%AppData%\Autodesk\Revit\Addins\2027\BlockRebar\` y `BlockRebar.addin` a
@@ -224,13 +271,15 @@ y (3) una captura de la lámina, de las barras en Revit o del error.
 | `BlockSection.cs` | Sección pura: perfil, círculos, polilíneas, cotas, niveles y etiquetas. |
 | `BlockOutline.cs` | Lectura del sólido de Revit y sistema local (`BlockFrame`, perfil muestreado). |
 | `HostAnalysis.cs` | Resultado por elemento, dirección propia e informe del modo diagnóstico. |
-| `BarTypes.cs`, `NameMatch.cs` | Tipos de barra del proyecto, diámetros reales y regla de nombres (exacto, fragmento único, ambiguo). |
-| `RebarGenerator.cs` | Crea los `Rebar` con las dos redes de seguridad, marca del plugin, borrado y comparación con lo previsto. |
+| `BarTypes.cs` | Tipos de barra del proyecto y diámetros reales; la regla de nombres (exacto, fragmento único, ambiguo) es `NameMatch` del común. |
+| `RebarGenerator.cs` | Crea los `Rebar` con las dos redes de seguridad, partición y origen del contrato, borrado y comparación con lo previsto. |
 | `SectionViews.cs` | Vistas de sección A-A y B-B en Revit, acero sin ocultar y etiquetas por conjunto. |
 | `GridPlan.cs` | Rejillas y ángulos de borde, puro: franjas, piezas, ángulos por categoría, recortes de esquina, metrado. |
-| `GridGenerator.cs` | Ángulos (Structural Framing), rejillas (Generic Model), familia de rejilla generada, marca y borrado. |
+| `GridGenerator.cs` | Ángulos (Structural Framing), rejillas (Generic Model), familia de rejilla generada, origen / anfitrión / metrado de misceláneos y borrado. |
 | `RebarOptionsWindow.cs`, `PlanPreview.cs`, `SectionPreview.cs`, `PreviewState.cs` | La lámina (WPF en código, sin XAML). |
-| `RevitTheme.cs`, `RibbonApp.cs`, `ArmarBloqueCommand.cs`, `Log.cs` | Tema oscuro, cinta, comando y registro. |
-| `AppConfig.cs`, `PartitionName.cs` | Configuración y plantilla de Partición. |
+| `RibbonApp.cs`, `ArmarBloqueCommand.cs`, `Log.cs` | Botón de la cinta (icono propio), comando (parámetros del contrato, migración) y registro. |
+| `AppConfig.cs` | Configuración (`config.json`), conversión de la plantilla de partición antigua. |
+| `external/ARBA-comun/` | Submódulo con el código común ARBA: contrato, partición, parámetros compartidos, origen, metrado, migración, cinta, tema y nombres. |
+| `NOTAS-ARBA-COMUN.md` | Lo que falta o conviene cambiar en ARBA-comun (no se toca desde aquí). |
 | `Tests/` | Pruebas de consola de las clases puras. |
 | `PLAN.md`, `INSTALADOR.md` | Plan de trabajo e instrucciones para el instalador de ARBA. |

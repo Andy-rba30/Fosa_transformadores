@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Structure;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -25,10 +26,15 @@ namespace BlockRebar
         /// <summary>Direccion propia: "" (la general), "long", "short", "x" o "y".</summary>
         public string DirectionOverride = "";
 
-        /// <summary>Conjuntos de armadura que el plugin ya creo en este elemento (comentario con la marca del plugin).</summary>
+        /// <summary>
+        /// Conjuntos de armadura que el plugin ya creo en este elemento: por "ARBA - Origen" = BLOQUES (contrato) y,
+        /// por compatibilidad con modelos no migrados, por el comentario antiguo "BlockRebar F#".
+        /// </summary>
         public List<ElementId> PluginRebars = new List<ElementId>();
-        /// <summary>Angulos y rejillas que el plugin ya coloco en este elemento.</summary>
+        /// <summary>Angulos y rejillas que el plugin ya coloco en este elemento (origen BLOQUES + anfitrion, o comentario antiguo).</summary>
         public List<ElementId> PluginGridItems = new List<ElementId>();
+        /// <summary>True si el elemento tiene armadura del plugin anterior al contrato (particion "BLQ-..." sin "ARBA - Origen").</summary>
+        public bool HasLegacyRebars;
         /// <summary>Tipo de rejilla propio ("" = el por defecto).</summary>
         public string GridTypeOverride = "";
 
@@ -62,12 +68,29 @@ namespace BlockRebar
             }
         }
 
-        public string Partition(AppConfig cfg, string setName, string family, string layer = "")
+        /// <summary>
+        /// Particion del contrato ARBA para un conjunto: la categoria la deduce del anfitrion (bloques = CIMIENTOS),
+        /// el prefijo es BLQ y el codigo es la familia F1...F8 ("CIMIENTOS - BLQ-FT-01-F4" con la plantilla por
+        /// defecto). La capa (u/v) no entra en la particion; queda en el nombre del conjunto y en el informe.
+        /// </summary>
+        public string Partition(AppConfig cfg, string setName, string familyCode, string layer = "")
         {
-            return PartitionName.Expand(cfg.PartitionTemplate, new PartitionName.Source
+            return ArbaPartition.BuildFor(Host, ArbaContract.Bloques, cfg.PartitionTemplate, new PartitionName.Source
             {
-                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, SetName = setName, Family = family, Layer = layer
+                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, SetName = setName, Code = familyCode ?? ""
             });
+        }
+
+        /// <summary>Rellena PluginRebars, PluginGridItems y HasLegacyRebars (lectura, sin transaccion).</summary>
+        public void FindPluginElements(Document doc)
+        {
+            PluginRebars = RebarGenerator.FindPluginRebars(doc, Host);
+            if (PluginRebars.Count > 0) Diagnostics.Add("ya tiene " + PluginRebars.Count + " conjunto(s) de armadura creados por el plugin");
+            PluginGridItems = GridGenerator.FindPluginItems(doc, Host);
+            if (PluginGridItems.Count > 0) Diagnostics.Add("ya tiene " + PluginGridItems.Count + " angulo(s)/rejilla(s) colocados por el plugin");
+            try { HasLegacyRebars = ArbaMigration.HasLegacy(doc, Host, ArbaContract.Bloques); }
+            catch (Exception ex) { HasLegacyRebars = false; Log.Error("HasLegacy " + Tag, ex); }
+            if (HasLegacyRebars) Diagnostics.Add("su armadura del plugin es anterior al contrato ARBA (particion BLQ-... sin \"ARBA - Origen\"): se puede migrar sin rearmar");
         }
 
         public static HostAnalysis Analyze(Document doc, Element host, AppConfig cfg)

@@ -5,6 +5,8 @@ using System.Reflection;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -314,8 +316,21 @@ namespace BlockRebar
         [JsonPropertyName("F7_wallHairpin")] public WallHairpinCfg F7 { get; set; } = new WallHairpinCfg();
         [JsonPropertyName("F8_wallHoriz")] public WallHorizCfg F8 { get; set; } = new WallHorizCfg();
 
-        /// <summary>Plantilla del parametro Particion: {marca}, {id}, {tipo}, {familia} (F1...F8), {conjunto}, {capa}.</summary>
-        [JsonPropertyName("partitionTemplate")] public string PartitionTemplate { get; set; } = "BLQ-{marca}-{familia}";
+        /// <summary>
+        /// Plantilla del parametro Particion (contrato ARBA-comun): {categoria} (la del anfitrion: CIMIENTOS),
+        /// {prefijo} (BLQ), {marca} (si esta vacia, el Id), {id}, {codigo} (familia F1...F8), {tipo}, {familia}
+        /// (familia de Revit) y {conjunto}. OJO: antes del contrato {familia} era el codigo F1...F8; ahora es {codigo}.
+        /// Normalize convierte la plantilla antigua "BLQ-{marca}-{familia}" y lo avisa en LoadWarnings.
+        /// </summary>
+        [JsonPropertyName("partitionTemplate")] public string PartitionTemplate { get; set; } = DefaultPartitionTemplate;
+
+        /// <summary>Plantilla por defecto del contrato: "CIMIENTOS - BLQ-FT-01-F4".</summary>
+        public const string DefaultPartitionTemplate = ArbaContract.PartitionTemplate;
+        /// <summary>Plantilla de las versiones anteriores al contrato ({familia} era el codigo F1...F8).</summary>
+        public const string LegacyPartitionTemplate = "BLQ-{marca}-{familia}";
+
+        /// <summary>Avisos de Normalize (plantilla antigua convertida...). No se guardan en config.json; van al informe.</summary>
+        [JsonIgnore] public List<string> LoadWarnings { get; set; } = new List<string>();
         /// <summary>Tolerancia geometrica (mm).</summary>
         [JsonPropertyName("toleranceMm")] public double ToleranceMm { get; set; } = 2;
         /// <summary>Longitud minima de un tramo recto para colocarlo (mm); los mas cortos se omiten con aviso.</summary>
@@ -438,7 +453,15 @@ namespace BlockRebar
             if (WallMaxWidthMm <= 0) WallMaxWidthMm = 300;
             if (ToleranceMm <= 0) ToleranceMm = 2;
             if (MinBarLengthMm < 0) MinBarLengthMm = 0;
-            if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = "BLQ-{marca}-{familia}";
+            if (LoadWarnings == null) LoadWarnings = new List<string>();
+            if (string.IsNullOrWhiteSpace(PartitionTemplate)) PartitionTemplate = DefaultPartitionTemplate;
+            string upgraded = UpgradePartitionTemplate(PartitionTemplate);
+            if (upgraded != null)
+            {
+                LoadWarnings.Add("plantilla de particion antigua \"" + PartitionTemplate + "\" convertida al contrato ARBA " + ArbaContract.Version +
+                                 ": \"" + upgraded + "\" ({familia} pasa a ser la familia de Revit y el codigo F1...F8 es {codigo}). Guarda la configuracion para no volver a ver este aviso.");
+                PartitionTemplate = upgraded;
+            }
             LevelReference = NormalizeLevelReference(LevelReference);
             Preview.PlanLayer = Families.Code(Families.Parse(Preview.PlanLayer));
             if (Preview.PlanLayer != "F1" && Preview.PlanLayer != "F2" && Preview.PlanLayer != "F3") Preview.PlanLayer = "F1";
@@ -480,6 +503,21 @@ namespace BlockRebar
         }
 
         /// <summary>"long", "short", "x", "y" o "angle"; cualquier otra cosa es "long".</summary>
+        /// <summary>
+        /// Plantilla del contrato equivalente a una plantilla anterior (empieza por "BLQ-", usa {familia} como codigo
+        /// F1...F8 y no tiene {codigo}): "BLQ-{marca}-{familia}" -> "{categoria} - {prefijo}-{marca}-{codigo}".
+        /// Null si la plantilla no es antigua.
+        /// </summary>
+        public static string UpgradePartitionTemplate(string template)
+        {
+            if (string.IsNullOrWhiteSpace(template)) return null;
+            string t = template.Trim();
+            string lower = t.ToLowerInvariant();
+            if (!lower.StartsWith("blq-", StringComparison.Ordinal) || !lower.Contains("{familia}") || lower.Contains("{codigo}")) return null;
+            string body = Regex.Replace(t.Substring(4), @"\{familia\}", "{codigo}", RegexOptions.IgnoreCase);
+            return "{categoria} - {prefijo}-" + body;
+        }
+
         public static string NormalizeDirection(string mode)
         {
             string m = (mode ?? "").Trim().ToLowerInvariant();

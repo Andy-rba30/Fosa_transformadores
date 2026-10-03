@@ -16,6 +16,19 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
+  <!-- Codigo comun ARBA (submodulo external/ARBA-comun, etiqueta v1.0.0): se compila como fuente dentro de
+       BlockRebar.dll (namespace Arba.Comun, clases internal). Nunca como DLL compartida. -->
+  <PropertyGroup>
+    <RevitVersion>2027</RevitVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- El globbing por defecto del SDK ya habria cogido external/**; se quita ANTES del Import para que el .props
+         sea la unica fuente (solo src/**) y no se dupliquen archivos ni se arrastren sus tests ni su proyecto de comprobacion -->
+    <Compile Remove="external\**" />
+    <None Remove="external\**" />
+  </ItemGroup>
+  <Import Project="external/ARBA-comun/Arba.Comun.props" />
+
   <ItemGroup>
     <!-- Revit 2027.2: las DLL de la API vienen en los paquetes de Nice3point -->
     <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2027.2.*" ExcludeAssets="runtime" />

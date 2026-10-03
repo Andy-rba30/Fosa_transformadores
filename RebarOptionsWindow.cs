@@ -8,6 +8,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -623,6 +624,14 @@ namespace BlockRebar
 
         private void Message(string text) { _message.Foreground = RevitTheme.Error; _message.Text = text ?? ""; }
 
+        /// <summary>Aviso si la plantilla no sigue el contrato ARBA (debe empezar por "{categoria} - {prefijo}-"); vacio si lo sigue.</summary>
+        private static string PartitionContractNote(string template)
+        {
+            if (ArbaPartition.TemplateFollowsContract(template)) return "";
+            return "   AVISO: la plantilla no sigue el contrato ARBA " + ArbaContract.Version + " (debe empezar por \"{categoria} - {prefijo}-\"; por defecto \"" +
+                   AppConfig.DefaultPartitionTemplate + "\"). El plugin de metrados no agrupara estas barras por categoria.";
+        }
+
         private void LoadGridTypeFields()
         {
             int i = _gTypes.SelectedIndex;
@@ -699,6 +708,12 @@ namespace BlockRebar
             var bottom = new StackPanel();
             bottom.Children.Add(legend);
             bottom.Children.Add(_status);
+            // pie: version del contrato ARBA-comun con la que se compilo el add-in (particion, parametros compartidos, cinta)
+            bottom.Children.Add(new TextBlock
+            {
+                Text = "Contrato ARBA " + ArbaContract.Version + "  ·  particion \"{categoria} - {prefijo}-{marca}-{codigo}\", origen " + ArbaContract.Bloques.Origin + ", prefijo " + ArbaContract.Bloques.Prefix,
+                Foreground = RevitTheme.Hint, FontSize = 10.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0), HorizontalAlignment = HorizontalAlignment.Right
+            });
             DockPanel.SetDock(bottom, Dock.Bottom);
             planPanel.Children.Add(bottom);
 
@@ -756,7 +771,7 @@ namespace BlockRebar
             int existing = _items.Sum(i => i.PluginRebars.Count);
             _deleteButton = new Button { Content = "Borrar armado del plugin", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0), IsEnabled = existing > 0 };
             _deleteButton.ToolTip = existing > 0
-                ? "Borra solo los " + existing + " conjunto(s) con la marca del plugin (comentario \"" + RebarGenerator.Marker + "\") en los elementos seleccionados. El resto de la armadura no se toca."
+                ? "Borra solo los " + existing + " conjunto(s) creados por el plugin (\"ARBA - Origen\" = " + ArbaContract.Bloques.Origin + " o, en modelos antiguos, comentario \"" + RebarGenerator.Marker + "\") en los elementos seleccionados. El resto de la armadura no se toca."
                 : "Los elementos seleccionados no tienen armadura creada por el plugin.";
             ToolTipService.SetShowOnDisabled(_deleteButton, true);
             _deleteButton.Click += (s, e) =>
@@ -1150,13 +1165,15 @@ namespace BlockRebar
                                     (missing.Count > 0 ? "  (sin tipo de barra: " + string.Join(", ", missing) + ")" : "") +
                                     (plan == null ? "  -> " + text : "") +
                                     (_lastGrid != null ? Environment.NewLine + "rejillas y angulos: " + _lastGrid.Describe() + (_lastGrid.Warnings.Count > 0 ? " (" + string.Join("; ", _lastGrid.Warnings) + ")" : "") : "");
-                    _partitionPreview.Text = "Ejemplo: " + _selected.Partition(scratch, "F1 u", Families.Code(Family.F1));
+                    _partitionPreview.Text = "Ejemplo: " + _selected.Partition(scratch, "F1 u", Families.Code(Family.F1)) + PartitionContractNote(scratch.PartitionTemplate);
+                    _partitionPreview.Foreground = ArbaPartition.TemplateFollowsContract(scratch.PartitionTemplate) ? RevitTheme.Muted : AmbiguousBorder;
                 }
                 else
                 {
                     _lastFrame = null; _lastPlan = null; _lastCfg = scratch;
                     _caption.Text = _selected != null ? _selected.Tag + _selected.Detail : "";
-                    _partitionPreview.Text = "";
+                    _partitionPreview.Text = PartitionContractNote(scratch.PartitionTemplate).Trim();
+                    _partitionPreview.Foreground = ArbaPartition.TemplateFollowsContract(scratch.PartitionTemplate) ? RevitTheme.Muted : AmbiguousBorder;
                 }
                 ShowViews(newElement);
 

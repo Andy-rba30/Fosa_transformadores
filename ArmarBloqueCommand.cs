@@ -8,6 +8,7 @@ using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
+using Arba.Comun;
 
 namespace BlockRebar
 {
@@ -15,7 +16,10 @@ namespace BlockRebar
     /// Comando "Bloques con foso": selecciona cimentaciones estructurales, lee su geometria
     /// (sin transaccion), abre la lamina y, con "Armar", crea las barras con una subtransaccion
     /// por elemento (o se arma entero y bien, o no se arma). "Borrar armado del plugin" quita
-    /// solo los conjuntos marcados por el plugin en los elementos seleccionados.
+    /// solo los conjuntos del plugin ("ARBA - Origen" = BLOQUES o comentario antiguo) en los
+    /// elementos seleccionados. Antes de armar o colocar rejillas asegura los ocho parametros
+    /// compartidos del contrato ARBA-comun (ArbaSharedParams.EnsureAll) y, si el bloque tiene
+    /// armadura anterior al contrato, ofrece migrarla (particion y origen) sin rearmar.
     /// </summary>
     [Transaction(TransactionMode.Manual)]
     [Regeneration(RegenerationOption.Manual)]
@@ -61,10 +65,7 @@ namespace BlockRebar
             foreach (Element h in hosts)
             {
                 HostAnalysis a = HostAnalysis.Analyze(doc, h, cfg);
-                a.PluginRebars = RebarGenerator.FindPluginRebars(doc, h);
-                if (a.PluginRebars.Count > 0) a.Diagnostics.Add("ya tiene " + a.PluginRebars.Count + " conjunto(s) de armadura creados por el plugin");
-                a.PluginGridItems = GridGenerator.FindPluginItems(doc, h);
-                if (a.PluginGridItems.Count > 0) a.Diagnostics.Add("ya tiene " + a.PluginGridItems.Count + " angulo(s)/rejilla(s) colocados por el plugin");
+                a.FindPluginElements(doc);
                 items.Add(a);
                 Log.Block(a.Tag.Trim(), string.Join(Environment.NewLine, a.Diagnostics));
             }
@@ -124,23 +125,31 @@ namespace BlockRebar
             // --- 3b'. Rejillas y angulos (sin armar) ---
             if (win.GridsRequested) return PlaceGrids(doc, items, cfg, angleSymbols, barTypes, commandData);
 
-            // --- 3c. Elementos que ya tienen barras del plugin: borrar antes de rearmar o conservar ---
+            // --- 3c. Elementos que ya tienen barras del plugin: borrar antes de rearmar, conservar o migrar las antiguas ---
             var withExisting = items.Where(i => i.Outline != null && i.PluginRebars.Count > 0).ToList();
+            var withLegacy = items.Where(i => i.HasLegacyRebars).ToList();   // migrar no necesita la geometria
             bool deleteFirst = false;
-            if (withExisting.Count > 0)
+            var affected = items.Where(i => withExisting.Contains(i) || withLegacy.Contains(i)).ToList();
+            if (affected.Count > 0)
             {
                 var td = new TaskDialog("Bloques con foso")
                 {
-                    MainInstruction = withExisting.Count + " elemento(s) ya tienen armadura creada por este plugin.",
-                    MainContent = string.Join(Environment.NewLine, withExisting.Select(i => i.Tag.Trim() + " " + i.PluginRebars.Count + " conjunto(s)")) +
-                                  Environment.NewLine + Environment.NewLine + "Para no duplicar barras, lo normal es borrarla antes de rearmar.",
+                    MainInstruction = affected.Count + " elemento(s) ya tienen armadura creada por este plugin.",
+                    MainContent = string.Join(Environment.NewLine, affected
+                                      .Select(i => i.Tag.Trim() + " " + i.PluginRebars.Count + " conjunto(s)" + (i.HasLegacyRebars ? " (anteriores al contrato ARBA: particion BLQ-... sin \"ARBA - Origen\")" : ""))) +
+                                  Environment.NewLine + Environment.NewLine + "Para no duplicar barras, lo normal es borrarla antes de rearmar." +
+                                  (withLegacy.Count > 0 ? Environment.NewLine + "La armadura antigua tambien puede migrarse al contrato (particion \"CIMIENTOS - BLQ-marca-F#\" y origen) sin crear ni borrar barras." : ""),
                     AllowCancellation = true,
                     CommonButtons = TaskDialogCommonButtons.Cancel
                 };
                 td.AddCommandLink(TaskDialogCommandLinkId.CommandLink1, "Borrar la armadura del plugin y rearmar", "Se borra dentro de la misma subtransaccion: si el nuevo armado se rechaza, la anterior se conserva.");
                 td.AddCommandLink(TaskDialogCommandLinkId.CommandLink2, "Conservar la existente y anadir la nueva", "Quedaran barras duplicadas en esos elementos.");
+                if (withLegacy.Count > 0)
+                    td.AddCommandLink(TaskDialogCommandLinkId.CommandLink3, "Migrar la armadura antigua al contrato (sin rearmar)",
+                        "Reescribe la particion a la forma del contrato ARBA " + ArbaContract.Version + " y rellena \"ARBA - Origen\" / \"ARBA - Codigo\" / \"Metrado - Elemento\" en los conjuntos antiguos del plugin. No se crea ni se borra ninguna barra; Ctrl+Z lo deshace.");
                 TaskDialogResult r = td.Show();
                 if (r == TaskDialogResult.CommandLink1) deleteFirst = true;
+                else if (r == TaskDialogResult.CommandLink3 && withLegacy.Count > 0) return MigrateLegacy(doc, withLegacy, commandData);
                 else if (r != TaskDialogResult.CommandLink2) return Result.Cancelled;
             }
 
@@ -149,9 +158,13 @@ namespace BlockRebar
             var detail = new StringBuilder();
             int total = 0, armed = 0, rejected = 0, deletedSets = 0;
 
+            var contractWarnings = new List<string>(cfg.LoadWarnings);
             using (Transaction tx = new Transaction(doc, "Armar bloques con foso"))
             {
                 tx.Start();
+                // parametros compartidos del contrato ARBA (origen, codigo, anfitrion, partida, material, peso, pernos, elemento)
+                // antes de la primera subtransaccion: Finish los escribe en cada conjunto
+                EnsureContractParameters(doc, contractWarnings);
                 foreach (HostAnalysis item in items)
                 {
                     string tag = item.Tag;
@@ -230,7 +243,8 @@ namespace BlockRebar
                             detail.AppendLine("== " + tag.Trim() + " ==");
                             detail.AppendLine(desc);
                             detail.AppendLine(res.Summary);
-                            detail.AppendLine("Particion: " + item.Partition(cfg, Families.Name(Family.F1), "F1", "u") + " (F1, capa u)  |  comentario: \"" + RebarGenerator.Marker + " F1\"...");
+                            detail.AppendLine("Particion: " + item.Partition(cfg, Families.Name(Family.F1), "F1", "u") + " (F1, capa u)  |  ARBA - Origen: " + ArbaContract.Bloques.Origin +
+                                              "  |  ARBA - Codigo: F1...F8  |  Metrado - Elemento: " + ArbaPartition.CategoryOf(item.Host) + "  (contrato ARBA " + ArbaContract.Version + ")");
                             detail.AppendLine();
                             detail.AppendLine("Tabla prevista (por familia, pesos por diametro):");
                             detail.AppendLine(res.Plan.QuantityTable());
@@ -269,6 +283,7 @@ namespace BlockRebar
                           (deletedSets > 0 ? ", " + deletedSets + " conjuntos anteriores del plugin borrados" : "") + "." +
                           (rejected > 0 ? Environment.NewLine + "ATENCION: " + rejected + " elemento(s) SIN ARMAR (ver detalle). No se ha creado ninguna barra en ellos." : "");
             string report = head + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, log) + Environment.NewLine + Environment.NewLine +
+                            ContractBlock(contractWarnings) +
                             "---- DETALLE ----" + Environment.NewLine + detail + "log: " + Log.Path;
             Log.Block("Armar bloques con foso", report);
             ShowReport(commandData, "Armado de bloques con foso", report);
@@ -305,9 +320,12 @@ namespace BlockRebar
             var log = new List<string>();
             var detail = new StringBuilder();
             int placedAngles = 0, placedGrids = 0, done = 0, rejected = 0;
+            var contractWarnings = new List<string>(cfg.LoadWarnings);
             using (Transaction tx = new Transaction(doc, "Colocar rejillas y angulos de foso"))
             {
                 tx.Start();
+                // rejillas y angulos necesitan los ocho parametros del contrato (origen, codigo, anfitrion, partida, material, peso, pernos, elemento)
+                EnsureContractParameters(doc, contractWarnings);
                 foreach (HostAnalysis item in items)
                 {
                     string tag = item.Tag;
@@ -344,6 +362,9 @@ namespace BlockRebar
                                     (res.Warnings.Count > 0 ? "  AVISOS: " + string.Join(" | ", res.Warnings) : ""));
                             detail.AppendLine("== " + tag.Trim() + " ==");
                             detail.AppendLine(plan.Describe());
+                            detail.AppendLine("Contrato ARBA: ARBA - Origen = " + ArbaContract.Bloques.Origin + ", ARBA - Codigo = \"" + GridGenerator.CodeGrid + " P1\" / \"" + GridGenerator.CodeAngle + " longCore\"..., ARBA - Anfitrion = " + item.Host.Id +
+                                              ", Metrado - Partida = \"" + ArbaContract.PartidaRejillas + "\" / \"" + ArbaContract.PartidaAngulos + "\", Metrado - Material = " + ArbaContract.MaterialAceroEstructural +
+                                              ", Metrado - Peso (kg) = m2 x kg/m2 (rejillas) / m x kg/m (angulos), Metrado - Pernos (und) = " + g.Angles.BoltsPerAngle + " por angulo, Metrado - Elemento = " + ArbaContract.ElementoMiscelaneos);
                             foreach (GridStrip st in plan.Strips) detail.AppendLine(st.Describe());
                             detail.AppendLine(plan.QuantityTable());
                             if (clash != null) detail.AppendLine(clash.Describe());
@@ -373,6 +394,7 @@ namespace BlockRebar
                           (angle == null && g.Angles.Enabled ? Environment.NewLine + "Sin tipo de angulo cargado o ambiguo: no se han colocado angulos (solo se cuentan en el metrado)." : "") +
                           (gridFamily == null && g.Mode == "model" ? Environment.NewLine + "Familia de rejilla no cargada: las rejillas solo se cuentan." : "");
             string report = head + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, log) + Environment.NewLine + Environment.NewLine +
+                            ContractBlock(contractWarnings) +
                             "---- DETALLE ----" + Environment.NewLine + detail + "log: " + Log.Path;
             Log.Block("Colocar rejillas y angulos", report);
             ShowReport(commandData, "Rejillas y angulos de foso", report);
@@ -455,11 +477,87 @@ namespace BlockRebar
                 }
                 tx.Commit();
             }
-            string report = sets + " conjunto(s) (" + bars + " barras) del plugin borrados en " + elems + " elemento(s). Solo se borran los conjuntos con el comentario \"" +
-                            RebarGenerator.Marker + "\"; el resto de la armadura no se toca." + Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines);
+            string report = sets + " conjunto(s) (" + bars + " barras) del plugin borrados en " + elems + " elemento(s). Solo se borran los conjuntos con \"ARBA - Origen\" = " +
+                            ArbaContract.Bloques.Origin + " (o, en modelos antiguos, con el comentario \"" + RebarGenerator.Marker + "\"); el resto de la armadura no se toca." +
+                            Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines);
             Log.Block("Borrar armado del plugin", report);
             var td = new TaskDialog("Borrar armado del plugin") { MainInstruction = sets + " conjunto(s) del plugin borrados en " + elems + " elemento(s).", MainContent = string.Join(Environment.NewLine, lines) };
             td.Show();
+            return Result.Succeeded;
+        }
+
+        /// <summary>
+        /// Asegura los ocho parametros compartidos del contrato ARBA-comun (definicion por GUID y vinculo de ejemplar a
+        /// sus categorias) dentro de la transaccion abierta y regenera. Los avisos (parametro homonimo migrado,
+        /// categoria no vinculable...) se anaden a la lista y van al informe.
+        /// </summary>
+        private static void EnsureContractParameters(Document doc, List<string> warnings)
+        {
+            try
+            {
+                if (!ArbaSharedParams.EnsureAll(doc, warnings))
+                    warnings.Add("No se pudieron asegurar todos los parametros del contrato ARBA: origen, codigo o metrado pueden quedar sin escribir en los elementos nuevos.");
+                doc.Regenerate();
+            }
+            catch (Exception ex)
+            {
+                warnings.Add("Parametros compartidos del contrato ARBA: " + ex.Message);
+                Log.Error("EnsureContractParameters", ex);
+            }
+        }
+
+        /// <summary>Bloque del informe con la version del contrato y sus avisos (vacio de avisos si no hubo).</summary>
+        private static string ContractBlock(List<string> warnings)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("---- CONTRATO ARBA " + ArbaContract.Version + " ----");
+            sb.AppendLine("Particion \"{categoria} - {prefijo}-{marca}-{codigo}\" (bloques: CIMIENTOS - BLQ-marca-F#), ARBA - Origen = " + ArbaContract.Bloques.Origin +
+                          ", parametros compartidos por GUID (Gestionar > Parametros de proyecto, grupo Datos). Comentarios ya no se escribe; el comentario antiguo solo se lee como respaldo.");
+            if (warnings.Count == 0) sb.AppendLine("sin avisos");
+            else foreach (string w in warnings) sb.AppendLine("aviso: " + w);
+            sb.AppendLine();
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Migra la armadura antigua del plugin (particion "BLQ-marca-F#" sin "ARBA - Origen") de los bloques dados al
+        /// contrato: particion "CIMIENTOS - BLQ-marca-F#", "ARBA - Origen" = BLOQUES, "ARBA - Codigo" = F# y
+        /// "Metrado - Elemento" = CIMIENTOS. No crea ni borra barras; una transaccion propia (Ctrl+Z la deshace).
+        /// </summary>
+        private static Result MigrateLegacy(Document doc, List<HostAnalysis> hosts, ExternalCommandData commandData)
+        {
+            var lines = new List<string>();
+            var avisos = new List<string>();
+            int migradas = 0, revisadas = 0;
+            using (Transaction tx = new Transaction(doc, "Migrar armadura antigua al contrato ARBA"))
+            {
+                tx.Start();
+                try
+                {
+                    foreach (HostAnalysis item in hosts)
+                    {
+                        ArbaMigrationResult r = ArbaMigration.MigrateHost(doc, item.Host, ArbaContract.Bloques);
+                        migradas += r.Migradas; revisadas += r.Revisadas;
+                        avisos.AddRange(r.Avisos);
+                        lines.Add(item.Tag + r.Migradas + " conjunto(s) migrados de " + r.Revisadas + " revisados (particiones reescritas " + r.ParticionesCambiadas + ", origenes escritos " + r.OrigenEscrito + ", ya conformes " + r.YaConformes + ")");
+                    }
+                    tx.Commit();
+                }
+                catch (Exception ex)
+                {
+                    tx.RollBack();
+                    Log.Error("MigrateLegacy", ex);
+                    TaskDialog.Show("Migrar armadura antigua", "No se pudo migrar: " + ex.Message + Environment.NewLine + "log: " + Log.Path);
+                    return Result.Failed;
+                }
+            }
+            string report = migradas + " conjunto(s) de " + revisadas + " migrados al contrato ARBA " + ArbaContract.Version + " en " + hosts.Count + " elemento(s). " +
+                            "Particion \"CIMIENTOS - BLQ-marca-F#\", ARBA - Origen = " + ArbaContract.Bloques.Origin + ", ARBA - Codigo = F#, Metrado - Elemento = CIMIENTOS. No se ha creado ni borrado ninguna barra." +
+                            Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines) +
+                            (avisos.Count > 0 ? Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, avisos.Select(a => "aviso: " + a)) : "") +
+                            Environment.NewLine + "log: " + Log.Path;
+            Log.Block("Migrar armadura antigua al contrato", report);
+            ShowReport(commandData, "Migrar armadura antigua al contrato ARBA", report);
             return Result.Succeeded;
         }
 

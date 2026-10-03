@@ -25,7 +25,7 @@
   "F7_wallHairpin":  { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 125, "layoutMode": "maxSpacing", "legMm": 350, "placement": "aligned" },
   "F8_wallHoriz":    { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 200, "layoutMode": "fromTop", "layers": 1, "shape": "segments", "lapMm": 400 },
 
-  "partitionTemplate": "BLQ-{marca}-{familia}",
+  "partitionTemplate": "{categoria} - {prefijo}-{marca}-{codigo}",
   "toleranceMm": 2,
   "minBarLengthMm": 300,
 

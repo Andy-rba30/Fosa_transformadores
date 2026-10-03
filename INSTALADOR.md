@@ -9,10 +9,13 @@ arrancar Revit.
 
 ## Origen
 
-- Repositorio: https://github.com/Andy-rba30/Fosa_transformadores, rama
-  `claude/ecstatic-ptolemy-cehcro` (o `main` cuando se fusione).
+- Repositorio: https://github.com/Andy-rba30/Fosa_transformadores, rama `main`. Lleva el
+  **submódulo** `external/ARBA-comun` (código común ARBA, etiqueta `v1.0.0`): clonar con
+  `git clone --recurse-submodules …` o, en un clon ya hecho, `git submodule update --init`;
+  sin el submódulo no compila.
 - Proyecto: `BlockRebar.csproj` (.NET 10, `net10.0-windows`, x64). Compilar con
-  `dotnet build -c Release`. La salida está en `bin\Release\net10.0-windows\`.
+  `dotnet build -c Release`. La salida está en `bin\Release\net10.0-windows\`. El código común
+  se compila dentro de `BlockRebar.dll` (no hay ninguna DLL `Arba.Comun` que instalar).
 - Dependencias: además de las DLL de Revit (los paquetes `Nice3point.Revit.Api.*` son solo de
   compilación, no se copian), usa **Clipper2** (`Clipper2Lib.dll`, biblioteca .NET pura), que
   queda en la salida y **hay que instalar junto a `BlockRebar.dll`**.
@@ -37,10 +40,12 @@ la misma carpeta que `BlockRebar.dll`.
 
 ## Dónde aparece en Revit
 
-Pestaña **ARBA** > panel **Acero** > desplegable **Acero** > botón **Bloques con foso**, junto a
-**Zapatas**, **Columnas**, **Muros** y **Losas**. Todos llevan la misma clase `ArbaRibbon`: cada
-uno crea la pestaña ARBA y los paneles IA / Acero / Encofrado si no existen (en ese orden) y
-añade su botón al desplegable "Acero" del panel "Acero", así que da igual cuál cargue primero.
+Pestaña **ARBA** > panel **Acero** > desplegable **Acero** > botón **Bloques con foso** (nombre
+interno `ARBA_Acero_Bloques`), junto a **Zapatas**, **Cimientos**, **Vigas**, **Columnas**,
+**Losas** y **Muro de contencion**. Todos llevan la misma clase `ArbaRibbon` del código común
+ARBA-comun: cada uno crea la pestaña ARBA y los paneles IA / Acero / Metrados / Encofrado si no
+existen (en ese orden) y añade su botón al desplegable "Acero" del panel "Acero", así que da
+igual cuál cargue primero (y conviven add-ins con y sin el contrato durante la integración).
 Si se desinstala Bloques con foso, solo hay que borrar `BlockRebar.addin` y la carpeta
 `BlockRebar\`; el desplegable sigue con los demás botones.
 
@@ -50,6 +55,11 @@ Si se desinstala Bloques con foso, solo hay que borrar `BlockRebar.addin` y la c
   "Crear familia de rejilla" (se guarda junto a la DLL y se carga en el proyecto). No hace falta
   instalarla; si el instalador encuentra una de una versión anterior, puede dejarla.
 - `%Temp%\BlockRebar.log`: registro de cada ejecución.
+- En el **proyecto** de Revit (no en disco): al armar o colocar rejillas crea los parámetros
+  compartidos del contrato ARBA (`ARBA - Origen`, `ARBA - Código`, `ARBA - Anfitrión`,
+  `Metrado - Partida`, `Metrado - Material`, `Metrado - Peso (kg)`, `Metrado - Pernos (und)`,
+  `Metrado - Elemento`; GUID fijos, grupo Datos) desde un archivo temporal que se borra; el
+  archivo de parámetros compartidos del usuario no cambia. No hay que instalar ningún `.txt`.
 
 ## Comprobación tras instalar
 

@@ -597,6 +597,7 @@ familia de rejilla generada con `Document.EditFamily` / plantilla, marca y borra
 - [x] Entrega 2c: `SectionViews` (ViewSection A-A y B-B en las líneas de corte de la lámina, escala 1:20, detalle fino, recorte = bloque + margen, profundidad configurable, nombre por plantilla con sufijo si existe, acero del plugin sin ocultar y con el conjunto completo, una etiqueta por conjunto y familia visible si la familia de etiqueta está cargada, acero sólido en la 3D activa opcional); casilla "Crear las vistas al armar" y botón "Crear solo las vistas de sección". Compila en Linux. **Pendiente de probar en Revit 2027.2.**
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
 - [x] Fase 3: rejillas de foso y ángulos (`GridPlan` puro con 47 comprobaciones nuevas (340 en total): caso del plano 8 ángulos = 23.14 m, 40 pernos, 10 P1 695 × 590 y 8 P2 820 × 590; foso rectangular con retiro de respaldo; canaleta en L con recorte de esquina; rejillas y ángulos en las secciones), `GridGenerator` (vigas por línea con justificación centrada y giro configurable, Generic Model por punto con Largo/Ancho/Espesor, familia generada desde la plantilla, W leído con la API, marca y borrado), panel en la ventana (modo, reparto, lista de tipos, familia, ángulo con regla de nombres, categorías), tipo por bloque, botones "Colocar rejillas y ángulos", "Crear familia de rejilla" y "Borrar rejillas y ángulos del plugin", dibujo en la lámina e informe. Compila en Linux. **Pendiente de probar en Revit 2027.2.**
+- [x] Integración de ARBA-comun v1.0.0 (ver apartado propio): submódulo, cinta común, partición del contrato `CIMIENTOS - BLQ-marca-F#`, origen / código / anfitrión y metrado de misceláneos en vez de Comentarios (respaldo por comentario para modelos antiguos), parámetros compartidos asegurados al armar, migración sin rearmar, tests (358 comprobaciones OK), `dotnet build -c Release` 0 errores. **Pendiente de probar en Revit 2027.2** con la lista de verificación.
 - [x] Fase 3 probada en Revit 2027.2 por el usuario: 8 ángulos colocados (2 × 3400, 4 × 3050, 2 × 2070 = 23.14 m, 141.2 kg, 40 pernos), centrados en cada borde sin llegar a las esquinas, ala horizontal bajo la rejilla a unos 35 mm bajo el tope y ala vertical contra la pared del foso; giro 0 (queda como valor por defecto). Rejillas en modo informe = plano (10 P1 + 8 P2 = 247.1 kg por bloque).
 - [x] "Crear familia de rejilla" corregido tras fallar con `Metric Generic Model.rft` ("The references are not geometric references" en las cotas; "There is no valid family type" en la fórmula): tipo inicial antes de valores y fórmulas, `Regenerate` tras crear los planos y la extrusión (sus referencias solo son geométricas después), alineaciones de las 4 caras obligatorias, comprobación final flexionando Largo y Ancho, pasos numerados 1–12 en el informe y creación atómica (si falla un paso no se guarda ni se carga nada). Botones de la fase 3 en su propia fila a todo el ancho y avisos con ajuste de línea. **Pendiente de volver a probar.**
 
@@ -641,9 +642,56 @@ familia de rejilla generada con `Document.EditFamily` / plantilla, marca y borra
 - Etiquetas y niveles en dos columnas (izquierda: "izq" y "centro"; derecha: "der" y los niveles) sin solapes, con línea de referencia al anclaje.
 - "Analizar sin armar" vuelca el mismo informe en `%Temp%\BlockRebar.log` (`Log.Block`), además de los diagnósticos de cada elemento al abrir el comando.
 
+## Integración de ARBA-comun (contrato 1.0.0)
+
+Código común de los add-ins ARBA como submódulo `external/ARBA-comun` (etiqueta `v1.0.0`),
+importado con `Arba.Comun.props` (se compila como fuente dentro de `BlockRebar.dll`; nunca se
+modifica desde aquí, lo que falte va a `NOTAS-ARBA-COMUN.md`). Cambios:
+
+- `RibbonApp.cs`: fuera la clase `ArbaRibbon` propia; `IconBloques` pasa a `RibbonApp`;
+  `ArbaRibbon.Ensure` + `ArbaRibbon.AddAcero`. Borrados `RevitTheme.cs`, `PartitionName.cs` y
+  `NameMatch.cs` (misma API en el común).
+- Partición del contrato `{categoria} - {prefijo}-{marca}-{codigo}` → `CIMIENTOS - BLQ-FT-01-F4`
+  (`HostAnalysis.Partition` → `ArbaPartition.BuildFor`). **`{familia}` cambia de significado**:
+  antes el código F1…F8, ahora la familia de Revit; el código es `{codigo}`. `AppConfig.Normalize`
+  convierte la plantilla antigua `BLQ-{marca}-{familia}` y lo avisa en el informe
+  (`LoadWarnings`). La capa u/v ya no entra en la partición (solo F#).
+- `RebarGenerator.Finish`: `ArbaPartition.Write` + `ArbaOrigin.WriteFor` (origen BLOQUES, código
+  F#, `Metrado - Elemento` = CIMIENTOS); **ya no escribe Comentarios**. `FindPluginRebars` /
+  `DeletePluginRebars` = `ArbaOrigin.Find` filtrado a armaduras + respaldo por el comentario
+  antiguo (`FindLegacyRebars`), para modelos no migrados.
+- `GridGenerator`: cada ángulo `ArbaOrigin.WriteFor(..., "ANGULO " + categoría)` +
+  `ArbaMetrado.WriteMiscelaneo(partida ÁNGULOS, m × kg/m, boltsPerAngle)`; cada rejilla
+  `"REJILLA " + grupo` + `WriteMiscelaneo(partida REJILLAS, m² × kg/m², null)` (mismos kg que el
+  informe); `Pieza` se mantiene; sin Comentarios. `FindPluginItems` / `DeletePluginItems` por
+  origen + anfitrión, con respaldo por comentario (`FindLegacyItems`).
+- `ArmarBloqueCommand`: `ArbaSharedParams.EnsureAll(doc, avisos); doc.Regenerate();` tras
+  `tx.Start()` de "Armar bloques con foso" y "Colocar rejillas y angulos" (los ocho parámetros),
+  avisos y versión del contrato en el informe (bloque "CONTRATO ARBA"); tercer `CommandLink`
+  "Migrar la armadura antigua al contrato (sin rearmar)" cuando `ArbaMigration.HasLegacy`
+  (`HostAnalysis.HasLegacyRebars`) → `MigrateHost` en su propia transacción. El detalle del
+  informe muestra `ARBA - Origen / Código` en vez del comentario.
+- `SectionViews`: la etiqueta usa `ArbaOrigin.CodeOf` (F#) con el comentario como respaldo.
+- `RebarOptionsWindow`: aviso si `!ArbaPartition.TemplateFollowsContract`, pie con "Contrato
+  ARBA 1.0.0", `PartitionName.Help` común.
+- `Tests/`: enlaza `ArbaContract.cs`, `ArbaPartition.cs`, `PartitionName.cs` y `NameMatch.cs`
+  del submódulo; pruebas de la partición nueva, `ArbaPartition.Parse / Upgrade`,
+  `TemplateFollowsContract` y la conversión de la plantilla antigua → 358 comprobaciones OK.
+- `BlockRebar.csproj`: `<RevitVersion>2027</RevitVersion>` + `Import` del `.props`, con
+  `<Compile Remove="external\**" />` **antes** del `Import` (el globbing por defecto del SDK ya
+  cogía `external/**` y duplicaba los archivos; ver `NOTAS-ARBA-COMUN.md`).
+
+Lista de verificación en Revit (pendiente del usuario): una sola pestaña ARBA; partición
+`CIMIENTOS - BLQ-FT-01-F1…F8`, origen, código y `Metrado - Elemento` en las barras nuevas con
+Comentarios vacío; rejillas y ángulos con origen, código, anfitrión, partida, material, peso (=
+informe), pernos = 5 y `MISCELANEOS`; rearmar con "borrar" no duplica; modelo antiguo reconocido
+por el comentario y migrable; el archivo de parámetros compartidos del usuario no cambia y no
+queda `ARBA-comun-*.txt` en `%TEMP%`; el plugin de metrados muestra REJILLAS y ÁNGULOS en
+"Misceláneos" sin cambiar su peso.
+
 ## Cómo retomar
 
-1. `git pull` de la rama `claude/ecstatic-ptolemy-cehcro`.
+1. `git pull` de `main` y `git submodule update --init` (código común `external/ARBA-comun`).
 2. `cd Tests && dotnet run` para las clases puras; `dotnet build -c Debug` en Windows con
    Revit 2027 copia la DLL (y `Clipper2Lib.dll`), `config.json` y el `.addin` a
    `%AppData%\Autodesk\Revit\Addins\2027\`.

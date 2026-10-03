@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!-- Programa de consola que prueba las clases puras (sin Revit): Geometry2D, Poly2D, BlockTopology,
-       BlockPlan, BlockSection, AppConfig, PartitionName.  dotnet run (desde esta carpeta). -->
+       BlockPlan, BlockSection, AppConfig, y las comunes ArbaPartition / PartitionName / NameMatch.  dotnet run (desde esta carpeta). -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net10.0</TargetFramework>
@@ -22,8 +22,11 @@
     <Compile Include="..\BlockSection.cs" Link="BlockSection.cs" />
     <Compile Include="..\ClashCheck.cs" Link="ClashCheck.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
-    <Compile Include="..\PartitionName.cs" Link="PartitionName.cs" />
-    <Compile Include="..\NameMatch.cs" Link="NameMatch.cs" />
+    <!-- Clases puras del codigo comun ARBA (submodulo external/ARBA-comun): contrato, particion y nombres -->
+    <Compile Include="..\external\ARBA-comun\src\ArbaContract.cs" Link="Arba.Comun\ArbaContract.cs" />
+    <Compile Include="..\external\ARBA-comun\src\ArbaPartition.cs" Link="Arba.Comun\ArbaPartition.cs" />
+    <Compile Include="..\external\ARBA-comun\src\PartitionName.cs" Link="Arba.Comun\PartitionName.cs" />
+    <Compile Include="..\external\ARBA-comun\src\NameMatch.cs" Link="Arba.Comun\NameMatch.cs" />
     <Compile Include="..\GridPlan.cs" Link="GridPlan.cs" />
   </ItemGroup>
 

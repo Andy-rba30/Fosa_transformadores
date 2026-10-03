@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Arba.Comun;
 
 namespace BlockRebar.Tests
 {
@@ -791,7 +792,7 @@ namespace BlockRebar.Tests
             c.F5.LayoutMode = "EXACT"; c.F1.V.LayoutMode = "raro"; c.F8.LayoutMode = "";
             c.Normalize();
             Check(c.F5.LayoutMode == "fromTop" && c.F1.V.LayoutMode == "maxSpacing" && c.F8.LayoutMode == "fromTop", "layoutMode normalizado (vacio = el de la familia)");
-            Check(c.LevelReference == "shared" && c.PartitionTemplate == "BLQ-{marca}-{familia}", "niveles en coordenadas compartidas, particion BLQ-{marca}-{familia}");
+            Check(c.LevelReference == "shared" && c.PartitionTemplate == "{categoria} - {prefijo}-{marca}-{codigo}", "niveles en coordenadas compartidas, particion {categoria} - {prefijo}-{marca}-{codigo} (contrato ARBA)");
             Check(c.BarTypesNeeded().Count == 11, "11 tipos de barra necesarios con todo activo (" + c.BarTypesNeeded().Count + ")");
             // claves exactas en el json
             string json = c.ToJson();
@@ -819,14 +820,36 @@ namespace BlockRebar.Tests
             System.IO.File.Delete(tmp);
             Check(AppConfig.LevelReferenceName("shared").Contains("compartidas") && AppConfig.LevelReferenceName("project").Contains("base"), "nombres de la referencia de niveles");
 
-            string s = PartitionName.Expand("BLQ-{marca}-{familia}", new PartitionName.Source { Mark = "FT-01", Family = "F4" });
-            Check(s == "BLQ-FT-01-F4", "particion con marca y familia: " + s);
-            s = PartitionName.Expand("BLQ-{marca}-{familia}", new PartitionName.Source { Mark = "", Id = "1234", Family = "F1" });
-            Check(s == "BLQ-1234-F1", "particion sin marca usa el id: " + s);
-            s = PartitionName.Expand("BLQ-{marca}-{familia}", new PartitionName.Source { Mark = "FT-01" });
-            Check(s == "BLQ-FT-01", "comodin vacio sin separador huerfano: " + s);
-            s = PartitionName.Expand("{familia}/{conjunto}", new PartitionName.Source { Family = "F7", SetName = "murete 1 tramo 2" });
-            Check(s == "F7/murete 1 tramo 2", "familia y conjunto: " + s);
+            // particion del contrato ARBA-comun: {categoria} del anfitrion, {prefijo} BLQ, {marca}, {codigo} = F1...F8
+            const string tpl = "{categoria} - {prefijo}-{marca}-{codigo}";
+            Check(tpl == ArbaContract.PartitionTemplate && tpl == AppConfig.DefaultPartitionTemplate, "plantilla por defecto = la del contrato ARBA " + ArbaContract.Version);
+            string s = PartitionName.Expand(tpl, new PartitionName.Source { Category = "CIMIENTOS", Prefix = "BLQ", Mark = "FT-01", Code = "F4" });
+            Check(s == "CIMIENTOS - BLQ-FT-01-F4", "particion con marca y codigo: " + s);
+            s = PartitionName.Expand(tpl, new PartitionName.Source { Category = "CIMIENTOS", Prefix = "BLQ", Mark = "", Id = "1234", Code = "F1" });
+            Check(s == "CIMIENTOS - BLQ-1234-F1", "particion sin marca usa el id: " + s);
+            s = PartitionName.Expand(tpl, new PartitionName.Source { Category = "CIMIENTOS", Prefix = "BLQ", Mark = "FT-01" });
+            Check(s == "CIMIENTOS - BLQ-FT-01", "comodin vacio sin separador huerfano: " + s);
+            s = PartitionName.Expand("{codigo}/{conjunto}", new PartitionName.Source { Code = "F7", SetName = "murete 1 tramo 2" });
+            Check(s == "F7/murete 1 tramo 2", "codigo y conjunto: " + s);
+            s = ArbaPartition.Build("CIMIENTOS", ArbaContract.Bloques.Prefix, "FT-01", "99", "F4");
+            Check(s == "CIMIENTOS - BLQ-FT-01-F4", "ArbaPartition.Build con el prefijo del contrato: " + s);
+            ArbaPartitionInfo info = ArbaPartition.Parse("CIMIENTOS - BLQ-FT-01-F4");
+            Check(info.Kind == ArbaPartitionKind.Contract && info.Category == "CIMIENTOS" && info.Prefix == "BLQ" && info.Mark == "FT-01" && info.Code == "F4",
+                  "ArbaPartition.Parse(\"CIMIENTOS - BLQ-FT-01-F4\"): " + info);
+            Check(info.Origin == ArbaContract.Bloques.Origin && info.Origin == "BLOQUES", "origen del prefijo BLQ = BLOQUES");
+            ArbaPartitionInfo old = ArbaPartition.Parse("BLQ-FT-01-F1");
+            Check(old.Kind == ArbaPartitionKind.Legacy && old.Mark == "FT-01" && old.Code == "F1" && old.PrefixInfo == ArbaContract.Bloques, "particion antigua BLQ-FT-01-F1 reconocida: " + old);
+            Check(ArbaPartition.Upgrade(old, "CIMIENTOS") == "CIMIENTOS - BLQ-FT-01-F1", "migracion de la particion antigua: " + ArbaPartition.Upgrade(old, "CIMIENTOS"));
+            Check(ArbaPartition.TemplateFollowsContract(tpl) && !ArbaPartition.TemplateFollowsContract("BLQ-{marca}-{codigo}"), "TemplateFollowsContract");
+            // conversion de la plantilla antigua ({familia} era el codigo F1...F8) al cargar config.json
+            Check(AppConfig.UpgradePartitionTemplate("BLQ-{marca}-{familia}") == tpl, "plantilla antigua BLQ-{marca}-{familia} -> " + tpl);
+            Check(AppConfig.UpgradePartitionTemplate("BLQ-{marca}-{familia}-{capa}") == "{categoria} - {prefijo}-{marca}-{codigo}-{capa}", "plantilla antigua con {capa} conserva el resto");
+            Check(AppConfig.UpgradePartitionTemplate(tpl) == null && AppConfig.UpgradePartitionTemplate("{marca}-{familia}") == null, "las plantillas que no son antiguas no se tocan");
+            var oldCfg = new AppConfig { PartitionTemplate = "BLQ-{marca}-{familia}" };
+            oldCfg.Normalize();
+            Check(oldCfg.PartitionTemplate == tpl && oldCfg.LoadWarnings.Count == 1 && oldCfg.LoadWarnings[0].Contains("convertida"), "Normalize convierte la plantilla antigua y avisa: " + string.Join(" | ", oldCfg.LoadWarnings));
+            AppConfig normalizedCopy = oldCfg.Clone();
+            Check(normalizedCopy.PartitionTemplate == tpl && normalizedCopy.LoadWarnings.Count == 0, "la copia ya normalizada no vuelve a avisar");
 
             // regla de nombres de tipo de barra: exacto primero; fragmento unico; fragmento ambiguo (no se elige en silencio)
             var names = new[] { "5/8\"", "Ø 5/8\"", "16M", "3/8\"", "Ø 3/8\"", "10M" };
