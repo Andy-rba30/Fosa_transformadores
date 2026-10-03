@@ -563,21 +563,19 @@ namespace BlockRebar
             AddRow(grid, r++, "Tipo por defecto:", _gDefaultType, "Tipo de rejilla de los bloques sin tipo propio (se elige por bloque en la lista de arriba).");
 
             // familia de rejilla
-            var fam = new WrapPanel();
-            _gFamilyName = new TextBox { Text = g.FamilyName, Width = 150, Margin = Pad }; Hook(_gFamilyName);
-            fam.Children.Add(_gFamilyName);
-            _gFamilyStatus = new TextBlock { Margin = Pad, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 180 };
-            fam.Children.Add(_gFamilyStatus);
-            _createFamilyButton = new Button { Content = "Crear familia de rejilla", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
+            _gFamilyName = new TextBox { Text = g.FamilyName, Width = 200, Margin = Pad, HorizontalAlignment = HorizontalAlignment.Left }; Hook(_gFamilyName);
+            AddRow(grid, r++, "Familia:", _gFamilyName, "Familia Generic Model de la rejilla (Largo, Ancho, Espesor de instancia). Si no esta cargada, el boton \"Crear familia de rejilla\" de la fila inferior la crea.");
+            _gFamilyStatus = new TextBlock { Margin = Pad, TextWrapping = TextWrapping.Wrap };
+            AddRow(grid, r++, "", _gFamilyStatus, null);
+            _createFamilyButton = new Button { Content = "Crear familia de rejilla", Padding = new Thickness(10, 4, 10, 4) };
             _createFamilyButton.ToolTip = "Genera la familia Generic Model desde la plantilla de Revit (extrusion con Largo, Ancho y Espesor de instancia, Peso por m2 de tipo, Peso = Largo x Ancho x Peso por m2, material Rejilla con patron de lineas cada 30 mm), la guarda junto a la DLL y la carga en el proyecto. La ventana se vuelve a abrir despues.";
+            ToolTipService.SetShowOnDisabled(_createFamilyButton, true);
             _createFamilyButton.Click += (s, e) =>
             {
                 AppConfig c = ReadConfig(out string err);
                 if (err != null) { Message(err); return; }
                 Result = c; CreateGridFamilyRequested = true; DialogResult = true; Close();
             };
-            fam.Children.Add(_createFamilyButton);
-            AddRow(grid, r++, "Familia:", fam, "Familia Generic Model de la rejilla (Largo, Ancho, Espesor de instancia). Si no esta cargada, el boton la crea.");
 
             // angulos
             var ang = new WrapPanel();
@@ -744,7 +742,9 @@ namespace BlockRebar
         {
             var panel = new StackPanel();
             _message = new TextBlock { Foreground = RevitTheme.Error, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 4) };
-            // los botones envuelven en varias lineas si no caben a lo ancho (antes se salian de la ventana)
+            // fila propia, a todo el ancho, para la fase 3 (rejillas y angulos); los botones envuelven en varias lineas si no caben
+            var phase3 = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 0, 0, 4) };
+            phase3.Children.Add(new TextBlock { Text = "Rejillas y angulos:", FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) });
             var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
 
             _analyzeButton = new Button { Content = "Analizar sin armar", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
@@ -792,7 +792,8 @@ namespace BlockRebar
                 if (err != null) { Message(err); return; }
                 Result = c; GridsRequested = true; DialogResult = true; Close();
             };
-            buttons.Children.Add(_gridsButton);
+            phase3.Children.Add(_createFamilyButton);
+            phase3.Children.Add(_gridsButton);
 
             int existingGrids = _items.Sum(i => i.PluginGridItems.Count);
             _deleteGridsButton = new Button { Content = "Borrar rejillas y angulos del plugin", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0), IsEnabled = existingGrids > 0 };
@@ -804,7 +805,7 @@ namespace BlockRebar
                 if (r != MessageBoxResult.Yes) return;
                 DeleteGridsRequested = true; DialogResult = true; Close();
             };
-            buttons.Children.Add(_deleteGridsButton);
+            phase3.Children.Add(_deleteGridsButton);
 
             var save = new Button { Content = "Guardar como valores por defecto", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
             save.ToolTip = "Guarda lo elegido en config.json (" + AppConfig.ConfigPath() + ") para las proximas veces.";
@@ -826,7 +827,9 @@ namespace BlockRebar
             buttons.Children.Add(cancel);
 
             foreach (UIElement b in buttons.Children) if (b is FrameworkElement fe) fe.Margin = new Thickness(4, 2, 4, 2);
+            foreach (UIElement b in phase3.Children) if (b is Button fb) fb.Margin = new Thickness(4, 2, 4, 2);
             panel.Children.Add(_message);
+            panel.Children.Add(phase3);
             panel.Children.Add(buttons);
             return panel;
         }
@@ -1107,7 +1110,7 @@ namespace BlockRebar
                 // rejillas y angulos: estado de la familia y del tipo de angulo
                 GridsCfg gc = scratch.Grids;
                 bool gridFamilyOk = _gridFamily.Loaded && NameMatch.Unique(new[] { _gridFamily.Name }, gc.FamilyName) != null;
-                _gFamilyStatus.Text = gridFamilyOk ? "cargada (" + _gridFamily.Types.Count + " tipo(s))" : "NO cargada: el boton la crea";
+                _gFamilyStatus.Text = gridFamilyOk ? "Familia cargada en el proyecto (" + _gridFamily.Types.Count + " tipo(s))." : "Familia NO cargada: pulsa \"Crear familia de rejilla\" (fila inferior de botones) para generarla y cargarla.";
                 _gFamilyStatus.Foreground = gridFamilyOk ? RevitTheme.Ok : AmbiguousBorder;
                 _createFamilyButton.IsEnabled = !gridFamilyOk;
                 List<GridGenerator.AngleSymbolInfo> acands = GridGenerator.Candidates(_angleSymbols, gc.Angles.FamilyName, gc.Angles.TypeName);

@@ -208,21 +208,24 @@ namespace BlockRebar
                     BuildGridFamily(fam, cfg, notes);
                     t.Commit();
                 }
+                notes.Add("paso 11 (guardar)");
                 string dir = Path.GetDirectoryName(AppConfig.ConfigPath()) ?? Path.GetTempPath();
                 path = Path.Combine(dir, SafeFile(cfg.FamilyName) + ".rfa");
                 try { fam.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = true }); }
                 catch (Exception ex)
                 {
                     path = Path.Combine(Path.GetTempPath(), SafeFile(cfg.FamilyName) + ".rfa");
-                    notes.Add("no se pudo guardar junto a la DLL (" + ex.Message + "); se guarda en " + path);
+                    notes.Add("  no se pudo guardar junto a la DLL (" + ex.Message + "); se guarda en " + path);
                     fam.SaveAs(path, new SaveAsOptions { OverwriteExistingFile = true });
                 }
-                notes.Add("familia guardada en " + path);
+                notes.Add("  familia guardada en " + path);
             }
             finally { try { fam.Close(false); } catch { } }
 
+            // la carga va dentro de la transaccion del proyecto: si falla, se deshace y no queda nada
+            notes.Add("paso 12 (cargar en el proyecto)");
             if (!doc.LoadFamily(path, new LoadOptions(), out Autodesk.Revit.DB.Family family) || family == null)
-                throw new InvalidOperationException("Revit no cargo la familia " + path);
+                throw new InvalidOperationException("fallo en paso 12 (cargar): Revit no cargo la familia " + path);
             // asegurar que la familia cargada se llama como en la configuracion
             if (!string.Equals(family.Name, cfg.FamilyName, StringComparison.OrdinalIgnoreCase))
             {
@@ -238,58 +241,106 @@ namespace BlockRebar
             return string.IsNullOrWhiteSpace(name) ? "Rejilla" : name.Trim();
         }
 
+        /// <summary>
+        /// Construye la familia paso a paso; cualquier fallo lanza con el numero y nombre del
+        /// paso, y la familia no se guarda ni se carga (creacion atomica).
+        /// </summary>
         private static void BuildGridFamily(Document fam, GridsCfg cfg, List<string> notes)
         {
-            FamilyManager fm = fam.FamilyManager;
-            FamilyParameter pL = fm.AddParameter("Largo", GroupTypeId.Geometry, SpecTypeId.Length, true);
-            FamilyParameter pA = fm.AddParameter("Ancho", GroupTypeId.Geometry, SpecTypeId.Length, true);
-            FamilyParameter pE = fm.AddParameter("Espesor", GroupTypeId.Geometry, SpecTypeId.Length, true);
-            FamilyParameter pW2 = fm.AddParameter("Peso por m2", GroupTypeId.General, SpecTypeId.MassPerUnitArea, false);
-            FamilyParameter pW = fm.AddParameter("Peso", GroupTypeId.General, SpecTypeId.Mass, false);
-            FamilyParameter pD = fm.AddParameter("Designacion", GroupTypeId.IdentityData, SpecTypeId.String.Text, false);
-            try { fm.SetFormula(pW, "Largo * Ancho * Peso por m2"); }
-            catch (Exception ex) { notes.Add("no se pudo poner la formula de Peso (" + ex.Message + ")"); }
-
-            double L0 = Mm(695), A0 = Mm(590), E0 = Mm(cfg.Types.Count > 0 ? cfg.Types[0].HeightMm : 38);
-            View view = new FilteredElementCollector(fam).OfClass(typeof(ViewPlan)).Cast<ViewPlan>().FirstOrDefault(v => !v.IsTemplate);
-            if (view == null) throw new InvalidOperationException("la plantilla no tiene vista de planta");
-
-            // planos de referencia de los cuatro lados (y los centrales de la plantilla, si existen, para mantener la pieza centrada)
-            ReferencePlane rpL = fam.FamilyCreate.NewReferencePlane(new XYZ(-L0 / 2, -2, 0), new XYZ(-L0 / 2, 2, 0), XYZ.BasisZ, view); rpL.Name = "Rejilla izq";
-            ReferencePlane rpR = fam.FamilyCreate.NewReferencePlane(new XYZ(L0 / 2, -2, 0), new XYZ(L0 / 2, 2, 0), XYZ.BasisZ, view); rpR.Name = "Rejilla der";
-            ReferencePlane rpF = fam.FamilyCreate.NewReferencePlane(new XYZ(-2, -A0 / 2, 0), new XYZ(2, -A0 / 2, 0), XYZ.BasisZ, view); rpF.Name = "Rejilla frente";
-            ReferencePlane rpB = fam.FamilyCreate.NewReferencePlane(new XYZ(-2, A0 / 2, 0), new XYZ(2, A0 / 2, 0), XYZ.BasisZ, view); rpB.Name = "Rejilla fondo";
-            ReferencePlane cLR = null, cFB = null;
-            foreach (ReferencePlane rp in new FilteredElementCollector(fam).OfClass(typeof(ReferencePlane)).Cast<ReferencePlane>())
-            {
-                if (rp.Id == rpL.Id || rp.Id == rpR.Id || rp.Id == rpF.Id || rp.Id == rpB.Id) continue;
-                XYZ n = rp.Normal;
-                if (Math.Abs(Math.Abs(n.X) - 1) < 1e-6 && Math.Abs(rp.FreeEnd.X) < 1e-6) cLR = cLR ?? rp;
-                if (Math.Abs(Math.Abs(n.Y) - 1) < 1e-6 && Math.Abs(rp.FreeEnd.Y) < 1e-6) cFB = cFB ?? rp;
-            }
-
-            // cotas con etiqueta (y de igualdad con el plano central para que crezca simetrica)
-            Dimension dL = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(-L0 / 2, A0 / 2 + 1, 0), new XYZ(L0 / 2, A0 / 2 + 1, 0)), Refs(rpL, rpR));
-            dL.FamilyLabel = pL;
-            Dimension dA = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(L0 / 2 + 1, -A0 / 2, 0), new XYZ(L0 / 2 + 1, A0 / 2, 0)), Refs(rpF, rpB));
-            dA.FamilyLabel = pA;
-            if (cLR != null) { try { Dimension eq = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(-L0 / 2, A0 / 2 + 1.5, 0), new XYZ(L0 / 2, A0 / 2 + 1.5, 0)), Refs(rpL, cLR, rpR)); eq.AreSegmentsEqual = true; } catch (Exception ex) { notes.Add("sin igualdad izq/der: " + ex.Message); } }
-            if (cFB != null) { try { Dimension eq = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(L0 / 2 + 1.5, -A0 / 2, 0), new XYZ(L0 / 2 + 1.5, A0 / 2, 0)), Refs(rpF, cFB, rpB)); eq.AreSegmentsEqual = true; } catch (Exception ex) { notes.Add("sin igualdad frente/fondo: " + ex.Message); } }
-
-            // extrusion rectangular
-            var profile = new CurveArrArray();
-            var loop = new CurveArray();
-            XYZ p1 = new XYZ(-L0 / 2, -A0 / 2, 0), p2 = new XYZ(L0 / 2, -A0 / 2, 0), p3 = new XYZ(L0 / 2, A0 / 2, 0), p4 = new XYZ(-L0 / 2, A0 / 2, 0);
-            loop.Append(Line.CreateBound(p1, p2)); loop.Append(Line.CreateBound(p2, p3)); loop.Append(Line.CreateBound(p3, p4)); loop.Append(Line.CreateBound(p4, p1));
-            profile.Append(loop);
-            SketchPlane sp = SketchPlane.Create(fam, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
-            Extrusion extr = fam.FamilyCreate.NewExtrusion(true, profile, sp, E0);
-            try { fm.AssociateElementParameterToFamilyParameter(extr.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM), pE); }
-            catch (Exception exc) { notes.Add("no se pudo asociar Espesor a la extrusion: " + exc.Message); }
-
-            // alinear las caras laterales con los planos
+            string step = "";
+            void Step(int n, string name) { step = "paso " + n + " (" + name + ")"; notes.Add(step); }
             try
             {
+                FamilyManager fm = fam.FamilyManager;
+
+                // 1. un tipo valido antes de cualquier valor o formula (la plantilla no trae ninguno)
+                Step(1, "tipo inicial");
+                string firstName = cfg.Types.Count > 0 ? cfg.Types[0].Name : "Rejilla IG-01";
+                if (fm.CurrentType == null)
+                {
+                    FamilyType ft0 = null;
+                    foreach (FamilyType existing in fm.Types) if (existing.Name == firstName) ft0 = existing;
+                    fm.CurrentType = ft0 ?? fm.NewType(firstName);
+                }
+                else if (string.IsNullOrWhiteSpace(fm.CurrentType.Name))
+                {
+                    try { fm.RenameCurrentType(firstName); } catch { fm.CurrentType = fm.NewType(firstName); }
+                }
+                if (fm.CurrentType == null) throw new InvalidOperationException("no se pudo crear el tipo inicial");
+
+                // 2. parametros
+                Step(2, "parametros Largo, Ancho, Espesor (instancia), Peso por m2, Peso, Designacion (tipo)");
+                FamilyParameter pL = fm.AddParameter("Largo", GroupTypeId.Geometry, SpecTypeId.Length, true);
+                FamilyParameter pA = fm.AddParameter("Ancho", GroupTypeId.Geometry, SpecTypeId.Length, true);
+                FamilyParameter pE = fm.AddParameter("Espesor", GroupTypeId.Geometry, SpecTypeId.Length, true);
+                FamilyParameter pW2 = fm.AddParameter("Peso por m2", GroupTypeId.General, SpecTypeId.MassPerUnitArea, false);
+                FamilyParameter pW = fm.AddParameter("Peso", GroupTypeId.General, SpecTypeId.Mass, false);
+                FamilyParameter pD = fm.AddParameter("Designacion", GroupTypeId.IdentityData, SpecTypeId.String.Text, false);
+
+                double L0 = Mm(695), A0 = Mm(590), E0 = Mm(cfg.Types.Count > 0 ? cfg.Types[0].HeightMm : 38);
+                fm.Set(pL, L0); fm.Set(pA, A0); fm.Set(pE, E0);
+                fm.Set(pW2, UnitUtils.ConvertToInternalUnits(cfg.Types.Count > 0 ? cfg.Types[0].KgPerM2 : 31.0, UnitTypeId.KilogramsPerSquareMeter));
+
+                // 3. formula del peso (largo x ancho = area; area x masa por area = masa)
+                Step(3, "formula Peso = Largo * Ancho * Peso por m2");
+                try { fm.SetFormula(pW, "Largo * Ancho * Peso por m2"); }
+                catch (Exception ex)
+                {
+                    notes.Add("  aviso: no se pudo poner la formula de Peso (" + ex.Message + "); la familia sigue, el peso lo calcula el plugin");
+                }
+
+                // 4. planos de referencia de los cuatro lados y los centrales de la plantilla
+                Step(4, "planos de referencia");
+                View view = new FilteredElementCollector(fam).OfClass(typeof(ViewPlan)).Cast<ViewPlan>().FirstOrDefault(v => !v.IsTemplate);
+                if (view == null) throw new InvalidOperationException("la plantilla no tiene vista de planta");
+                ReferencePlane rpL = fam.FamilyCreate.NewReferencePlane(new XYZ(-L0 / 2, -2, 0), new XYZ(-L0 / 2, 2, 0), XYZ.BasisZ, view); rpL.Name = "Rejilla izq";
+                ReferencePlane rpR = fam.FamilyCreate.NewReferencePlane(new XYZ(L0 / 2, -2, 0), new XYZ(L0 / 2, 2, 0), XYZ.BasisZ, view); rpR.Name = "Rejilla der";
+                ReferencePlane rpF = fam.FamilyCreate.NewReferencePlane(new XYZ(-2, -A0 / 2, 0), new XYZ(2, -A0 / 2, 0), XYZ.BasisZ, view); rpF.Name = "Rejilla frente";
+                ReferencePlane rpB = fam.FamilyCreate.NewReferencePlane(new XYZ(-2, A0 / 2, 0), new XYZ(2, A0 / 2, 0), XYZ.BasisZ, view); rpB.Name = "Rejilla fondo";
+                ReferencePlane cLR = null, cFB = null;
+                foreach (ReferencePlane rp in new FilteredElementCollector(fam).OfClass(typeof(ReferencePlane)).Cast<ReferencePlane>())
+                {
+                    if (rp.Id == rpL.Id || rp.Id == rpR.Id || rp.Id == rpF.Id || rp.Id == rpB.Id) continue;
+                    XYZ n = rp.Normal;
+                    if (Math.Abs(Math.Abs(n.X) - 1) < 1e-6 && Math.Abs(rp.FreeEnd.X) < 1e-6) cLR = cLR ?? rp;
+                    if (Math.Abs(Math.Abs(n.Y) - 1) < 1e-6 && Math.Abs(rp.FreeEnd.Y) < 1e-6) cFB = cFB ?? rp;
+                }
+                fam.Regenerate();   // las referencias de los planos recien creados solo son geometricas tras regenerar
+
+                // 5. cotas etiquetadas con Largo y Ancho (y de igualdad con los planos centrales para que crezca simetrica)
+                Step(5, "cotas etiquetadas Largo / Ancho");
+                Dimension dL = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(-L0 / 2, A0 / 2 + 1, 0), new XYZ(L0 / 2, A0 / 2 + 1, 0)), Refs(rpL, rpR));
+                dL.FamilyLabel = pL;
+                Dimension dA = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(L0 / 2 + 1, -A0 / 2, 0), new XYZ(L0 / 2 + 1, A0 / 2, 0)), Refs(rpF, rpB));
+                dA.FamilyLabel = pA;
+                if (cLR != null)
+                {
+                    try { Dimension eq = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(-L0 / 2, A0 / 2 + 1.5, 0), new XYZ(L0 / 2, A0 / 2 + 1.5, 0)), Refs(rpL, cLR, rpR)); eq.AreSegmentsEqual = true; }
+                    catch (Exception ex) { notes.Add("  aviso: sin igualdad izquierda/derecha con el plano central (" + ex.Message + ")"); }
+                }
+                else notes.Add("  aviso: la plantilla no tiene plano central izquierda/derecha; la pieza crece hacia un lado");
+                if (cFB != null)
+                {
+                    try { Dimension eq = fam.FamilyCreate.NewDimension(view, Line.CreateBound(new XYZ(L0 / 2 + 1.5, -A0 / 2, 0), new XYZ(L0 / 2 + 1.5, A0 / 2, 0)), Refs(rpF, cFB, rpB)); eq.AreSegmentsEqual = true; }
+                    catch (Exception ex) { notes.Add("  aviso: sin igualdad frente/fondo con el plano central (" + ex.Message + ")"); }
+                }
+                else notes.Add("  aviso: la plantilla no tiene plano central frente/fondo; la pieza crece hacia un lado");
+
+                // 6. extrusion rectangular con el espesor asociado a Espesor
+                Step(6, "extrusion y asociacion de Espesor");
+                var profile = new CurveArrArray();
+                var loop = new CurveArray();
+                XYZ p1 = new XYZ(-L0 / 2, -A0 / 2, 0), p2 = new XYZ(L0 / 2, -A0 / 2, 0), p3 = new XYZ(L0 / 2, A0 / 2, 0), p4 = new XYZ(-L0 / 2, A0 / 2, 0);
+                loop.Append(Line.CreateBound(p1, p2)); loop.Append(Line.CreateBound(p2, p3)); loop.Append(Line.CreateBound(p3, p4)); loop.Append(Line.CreateBound(p4, p1));
+                profile.Append(loop);
+                SketchPlane sp = SketchPlane.Create(fam, Plane.CreateByNormalAndOrigin(XYZ.BasisZ, XYZ.Zero));
+                Extrusion extr = fam.FamilyCreate.NewExtrusion(true, profile, sp, E0);
+                fm.AssociateElementParameterToFamilyParameter(extr.get_Parameter(BuiltInParameter.EXTRUSION_END_PARAM), pE);
+                fam.Regenerate();
+
+                // 7. bloquear las caras laterales del solido a los planos (referencias geometricas de las caras)
+                Step(7, "alineaciones de las caras con los planos");
+                int aligned = 0;
                 var opt = new Options { ComputeReferences = true, DetailLevel = ViewDetailLevel.Fine };
                 foreach (GeometryObject go in extr.get_Geometry(opt))
                 {
@@ -299,48 +350,63 @@ namespace BlockRebar
                         if (!(f is PlanarFace pf) || pf.Reference == null) continue;
                         XYZ n = pf.FaceNormal;
                         ReferencePlane rp = n.X < -0.99 ? rpL : n.X > 0.99 ? rpR : n.Y < -0.99 ? rpF : n.Y > 0.99 ? rpB : null;
-                        if (rp != null) fam.FamilyCreate.NewAlignment(view, rp.GetReference(), pf.Reference);
+                        if (rp == null) continue;
+                        fam.FamilyCreate.NewAlignment(view, rp.GetReference(), pf.Reference);
+                        aligned++;
                     }
                 }
-            }
-            catch (Exception exc) { notes.Add("no se pudieron bloquear los lados a los planos (" + exc.Message + "): Largo y Ancho pueden no gobernar la geometria"); }
+                if (aligned < 4) throw new InvalidOperationException("solo se alinearon " + aligned + " de 4 caras: Largo y Ancho no gobernarian la geometria");
+                fam.Regenerate();
 
-            // material con patron de modelo de lineas cada 30 mm
-            try
-            {
-                ElementId matId = Material.Create(fam, "Rejilla");
-                var mat = fam.GetElement(matId) as Material;
-                var fp = new FillPattern("Rejilla 30 mm", FillPatternTarget.Model, FillPatternHostOrientation.ToHost, 0, Mm(30));
-                FillPatternElement fpe = FillPatternElement.Create(fam, fp);
-                if (mat != null)
+                // 8. material con patron de modelo de lineas cada 30 mm
+                Step(8, "material Rejilla con patron de 30 mm");
+                try
                 {
-                    mat.Color = new Color(110, 115, 120);
-                    mat.SurfaceForegroundPatternId = fpe.Id;
-                    mat.SurfaceForegroundPatternColor = new Color(40, 40, 40);
+                    ElementId matId = Material.Create(fam, "Rejilla");
+                    var mat = fam.GetElement(matId) as Material;
+                    var fp = new FillPattern("Rejilla 30 mm", FillPatternTarget.Model, FillPatternHostOrientation.ToHost, 0, Mm(30));
+                    FillPatternElement fpe = FillPatternElement.Create(fam, fp);
+                    if (mat != null)
+                    {
+                        mat.Color = new Color(110, 115, 120);
+                        mat.SurfaceForegroundPatternId = fpe.Id;
+                        mat.SurfaceForegroundPatternColor = new Color(40, 40, 40);
+                    }
+                    Parameter mp = extr.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
+                    if (mp != null && !mp.IsReadOnly) mp.Set(matId);
                 }
-                Parameter mp = extr.get_Parameter(BuiltInParameter.MATERIAL_ID_PARAM);
-                if (mp != null && !mp.IsReadOnly) mp.Set(matId);
-            }
-            catch (Exception exc) { notes.Add("material Rejilla: " + exc.Message); }
+                catch (Exception ex) { notes.Add("  aviso: material Rejilla no aplicado (" + ex.Message + ")"); }
 
-            // un tipo por cada tipo de la lista
-            bool first = true;
-            foreach (GridTypeCfg t in cfg.Types)
-            {
-                FamilyType ft = null;
-                foreach (FamilyType existing in fm.Types) if (existing.Name == t.Name) ft = existing;
-                if (ft == null)
+                // 9. un tipo por cada tipo de la lista, con su peso, su alto y su designacion
+                Step(9, "tipos de la lista");
+                foreach (GridTypeCfg t in cfg.Types)
                 {
-                    if (first && fm.CurrentType != null && (string.IsNullOrWhiteSpace(fm.CurrentType.Name) || fm.CurrentType.Name.Trim() == ""))
-                    { try { fm.RenameCurrentType(t.Name); ft = fm.CurrentType; } catch { } }
-                    if (ft == null) ft = fm.NewType(t.Name);
+                    FamilyType ft = null;
+                    foreach (FamilyType existing in fm.Types) if (existing.Name == t.Name) ft = existing;
+                    fm.CurrentType = ft ?? fm.NewType(t.Name);
+                    fm.Set(pW2, UnitUtils.ConvertToInternalUnits(t.KgPerM2, UnitTypeId.KilogramsPerSquareMeter));
+                    fm.Set(pE, Mm(t.HeightMm));
+                    fm.Set(pL, L0); fm.Set(pA, A0);
+                    try { fm.Set(pD, t.Designation ?? ""); } catch { }
                 }
-                fm.CurrentType = ft;
-                fm.Set(pW2, UnitUtils.ConvertToInternalUnits(t.KgPerM2, UnitTypeId.KilogramsPerSquareMeter));
-                fm.Set(pE, Mm(t.HeightMm));
+
+                // 10. comprobacion: flexionar Largo y Ancho y ver que la caja de la extrusion cambia
+                Step(10, "comprobacion de que Largo y Ancho gobiernan la extrusion");
+                fam.Regenerate();
+                BoundingBoxXYZ bb0 = extr.get_BoundingBox(null);
+                fm.Set(pL, L0 + Mm(200)); fm.Set(pA, A0 + Mm(100));
+                fam.Regenerate();
+                BoundingBoxXYZ bb1 = extr.get_BoundingBox(null);
                 fm.Set(pL, L0); fm.Set(pA, A0);
-                try { fm.Set(pD, t.Designation ?? ""); } catch { }
-                first = false;
+                fam.Regenerate();
+                if (bb0 == null || bb1 == null || Math.Abs((bb1.Max.X - bb1.Min.X) - (bb0.Max.X - bb0.Min.X) - Mm(200)) > Mm(1) || Math.Abs((bb1.Max.Y - bb1.Min.Y) - (bb0.Max.Y - bb0.Min.Y) - Mm(100)) > Mm(1))
+                    throw new InvalidOperationException("al cambiar Largo y Ancho la extrusion no cambio como debia (caja " + (bb0 == null ? "?" : ToMm(bb0.Max.X - bb0.Min.X) + " x " + ToMm(bb0.Max.Y - bb0.Min.Y)) +
+                                                        " -> " + (bb1 == null ? "?" : ToMm(bb1.Max.X - bb1.Min.X) + " x " + ToMm(bb1.Max.Y - bb1.Min.Y)) + " mm)");
+                notes.Add("  Largo y Ancho gobiernan la extrusion (comprobado); Espesor gobierna su altura por asociacion");
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException("fallo en " + step + ": " + ex.Message, ex);
             }
         }
 
