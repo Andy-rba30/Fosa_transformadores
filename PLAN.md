@@ -38,8 +38,9 @@ add-in añada su botón al desplegable común.
 | Fase | Contenido | Estado |
 |------|-----------|--------|
 | 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | **hecho — esperando OK** |
-| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano; mostrar la salida de los tests | pendiente |
-| 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | pendiente |
+| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano; mostrar la salida de los tests | pendiente |
+| 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | pendiente |
+| 2b (opcional) | Botón **Crear vistas de sección en Revit** tras Armar (`SectionViews.cs`): dos `ViewSection` A y B, acero sin ocultar, etiquetas opcionales. No bloquea la fase 1 | pendiente |
 | 3 | Pruebas del usuario en Revit 2027.2 y correcciones | pendiente |
 | 4 (opcional) | Botón **Rejillas de foso**: ángulos de borde, pernos y rejillas | solo si se pide |
 
@@ -56,18 +57,21 @@ add-in añada su botón al desplegable común.
 | `Poly2D.cs` | Booleanas y offsets 2D sobre **Clipper2** (NuGet `Clipper2`): unión, diferencia, intersección, offset, apertura morfológica, componentes conexas, **inset por arista con recubrimiento distinto por tipo de borde** | nuevo (puro) |
 | `BlockTopology.cs` | Clasificación pura del bloque en 2D: a partir de los anillos del contorno inferior, de las regiones del tope y de los fondos de foso (anillos + cota) obtiene fosos, plataformas, muretes, y para cada arista de cada región su **tipo** (exterior / cara de foso / límite interno) y a qué región pertenece cada cara de foso | nuevo (puro) |
 | `BlockPlan.cs` | Armado puro F1…F8 en coordenadas locales: cada barra es una **polilínea** (tramo recto + patas como tramos), agrupación en conjuntos iguales equiespaciados, avisos, conteo y longitudes por familia, peso por diámetro | nuevo (puro) |
+| `BlockSection.cs` | Sección pura: `BlockSection.Cut(plan, topología, líneaDeCorte)` devuelve el perfil del hormigón en ese corte, los círculos (barra, familia, posición, diámetro), las polilíneas contenidas en el plano, las cotas (ancho total, tramos murete / foso / núcleo, profundidad de foso, espesor de base), los niveles y los anclajes de las etiquetas por familia y lado | nuevo (puro) |
 | `BlockOutline.cs` | Lectura del sólido de Revit: zBase, zTope, fondos de foso, anillos, caras verticales, motivos de rechazo; `BlockFrame` (sistema local u/v por dirección, perfiles reales de las dos secciones muestreados con `Solid.IntersectWithCurve`) | nuevo, patrón de `FootingOutline` |
 | `HostAnalysis.cs` | Resultado por elemento (topología o motivo de rechazo) + dirección propia | adaptado |
 | `RebarGenerator.cs` | Crea los `Rebar` con `CreateFromCurves` (polilíneas con patas), arrays `SetLayoutAsFixedNumber`, Partición, y las **dos redes de seguridad** | adaptado |
-| `RebarOptionsWindow.cs` | Ventana WPF en código: lista de bloques, panel por familia, recubrimientos y partición, planta + dos secciones, botones | adaptado |
-| `PlanPreview.cs` | Planta: contorno, fosos sombreados, plataformas y muretes con colores distintos, barras por familia con leyenda y tooltip | adaptado |
-| `SectionPreview.cs` | Sección por el centro del bloque en el plano u-z o v-z (dos instancias), perfil real, círculos y rayas con patas | adaptado |
+| `RebarOptionsWindow.cs` | Ventana WPF en código: lista de bloques, panel por familia, recubrimientos y partición, lámina (planta + sección A-A + sección B-B), leyenda, interruptores, botones | adaptado |
+| `PreviewState.cs` | Estado compartido de las tres vistas: posición de los cortes A y B, barra resaltada, familia aislada, capa de planta mostrada, interruptores (cotas, etiquetas, recubrimientos); avisa a las vistas para redibujar | nuevo |
+| `PlanPreview.cs` | Planta: contorno, fosos sombreados, plataformas y muretes con colores distintos, barras de la capa elegida, ejes u/v, **líneas de corte A–A y B–B arrastrables** con flechas y rótulos, leyenda y tooltip | adaptado |
+| `SectionPreview.cs` | Dibuja un `SectionCut` (A-A o B-B): título y escala, perfil real, círculos y polilíneas con patas, etiquetas con la notación del plano, cotas, niveles, recubrimientos; zoom / arrastrar / doble clic propios | adaptado |
+| `SectionViews.cs` (opcional, fase 2b) | Crea en Revit las dos `ViewSection` en las líneas de corte, acero sin ocultar y etiquetas de barra | nuevo |
 | `ArmarBloqueCommand.cs` | Comando externo: selección de cimentaciones estructurales, análisis, ventana, transacción con subtransacción por elemento, informe | adaptado |
 | `Tests/BlockRebar.Tests.csproj`, `Tests/Program.cs` | Programa de consola: `Poly2D`, `BlockTopology`, `BlockPlan` con el caso del plano, config y partición | nuevo |
 | `README.md`, `INSTALADOR.md` | Documentación con el mismo estilo que Zapatas | nuevo |
 
-Las clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `AppConfig`,
-`PartitionName`) no dependen de Revit; solo de Clipper2 (biblioteca .NET pura, compila en
+Las clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`,
+`AppConfig`, `PartitionName`) no dependen de Revit; solo de Clipper2 (biblioteca .NET pura, compila en
 Linux). `Clipper2Lib.dll` se copia junto a `BlockRebar.dll` (el csproj deja de usar
 `CopyLocalLockFileAssemblies=false` y mantiene `ExcludeAssets="runtime"` en los paquetes de
 Revit, así solo se copia Clipper2).
@@ -196,23 +200,114 @@ plano de la polilínea). Partición = `partitionTemplate` con `{familia}` = F1�
 de barra se buscan por nombre exacto o fragmento; sin coincidencia no se arma, nunca se
 sustituye.
 
-## 4. Ventana previa (tema oscuro, WPF en código)
+## 4. Ventana previa (tema oscuro, WPF en código): la lámina del plano
 
-- **Bloques seleccionados**: `u × v`, canto, nº de fosos (con profundidad), plataformas y
-  muretes detectados, resumen del armado o motivo de rechazo en rojo, **dirección por
-  elemento**. Clic en una fila → esquemas.
-- **Familias F1…F8**: un panel compacto por familia (activar, tipo de barra, separación,
-  patas / vertical / pie / extensión según la familia). Recubrimientos (4), `wallMaxWidthMm`,
-  dirección general y plantilla de Partición.
-- **Planta**: contorno inferior con huecos, fosos sombreados, plataformas y muretes con
-  colores distintos, barras por familia (un color por familia + leyenda), marcas de pata,
-  tooltip con familia / diámetro / longitud / cota. Rueda zoom, arrastrar, doble clic.
-- **Dos secciones** por el centro del bloque: **A** (plano u-z, corte a v medio) y **B**
-  (plano v-z, corte a u medio), perfil real muestreado del sólido (muretes, fosos y
-  plataforma tal como están), terreno, círculos para las barras que cortan el plano y rayas
-  con sus patas para las que van en él (la más cercana al corte de cada familia).
-- Botones: **Guardar como valores por defecto** (escribe `config.json`), **Armar**,
-  **Cancelar**.
+El esquema se ve como la lámina del plano: **una planta y dos secciones, una por cada
+dirección**, todo calculado por las mismas clases puras que usa el generador.
+
+### Disposición
+
+- **Izquierda, la PLANTA** del bloque seleccionado:
+  - contorno exterior (con huecos), fosos sombreados, plataformas y muretes en colores
+    distintos;
+  - barras de **F1 / F2 / F3 según la capa que se elija mostrar** (selector de capa en la
+    cabecera de la planta; las familias de cara F4…F8 se marcan con su traza en planta);
+  - **ejes locales u/v** con su flecha y rótulo;
+  - **DOS líneas de corte** con flechas y rótulos "A" y "B" como en el plano: **A–A a lo
+    largo de u** (plano u-z, a `v = vCorte`) y **B–B a lo largo de v** (plano v-z, a
+    `u = uCorte`), ambas por el centro del bloque por defecto.
+- **Derecha, apiladas**: **SECCIÓN A-A** arriba y **SECCIÓN B-B** abajo, cada una con su
+  título y su escala (1:20, 1:25, 1:50… la que resulte de encajar, mostrada en el título).
+- Debajo o al lado, la **leyenda** de familias (F1…F8, un color cada una) y los
+  **interruptores** "Cotas", "Etiquetas", "Recubrimientos".
+- Lista de **bloques seleccionados** (como en Zapatas): `u × v`, canto, nº de fosos con su
+  profundidad, plataformas y muretes detectados, resumen del armado o motivo de rechazo en
+  rojo, **dirección por elemento**. Panel por **familia F1…F8** (activar, tipo, separación,
+  patas / vertical / pie / extensión), recubrimientos (4), `wallMaxWidthMm`, dirección
+  general, referencia de niveles y plantilla de Partición. Botones **Guardar como valores
+  por defecto**, **Armar**, **Cancelar**.
+
+### Contenido de cada sección (`SectionPreview` dibuja un `SectionCut`)
+
+- **Perfil real del hormigón** en ese corte (muestreado del sólido con
+  `Solid.IntersectWithCurve`, como en `SectionPreview` de Zapatas): murete, foso, núcleo y
+  base, más el **solado** si existe (sólido o cara horizontal por debajo de zBase dentro
+  del elemento o de un suelo adyacente; se dibuja como franja aparte). En `Tests/` el perfil
+  sale de la topología (exacto); en Revit manda el muestreado y, si difiere del topológico
+  más de la tolerancia, se avisa.
+- **Barras cortadas** por el plano: círculos a su **diámetro real** en el punto de cruce de
+  cada tramo de su polilínea con el plano.
+- **Barras contenidas en el plano** (dentro de la tolerancia: la más cercana al corte de
+  cada conjunto, a menos de media separación, o cualquier barra suelta a menos de la
+  tolerancia): **líneas con sus patas y doblados** (radio de doblado del tipo).
+- **Color por familia** F1…F8 con leyenda compartida con la planta.
+- **Etiquetas** con la notación del plano (`ø5/8"@125`, `3/8"@125`, `ø5/8" L=1370`
+  para barras sueltas) y línea de referencia: **una etiqueta por familia y por lado**
+  (izquierda / derecha del centro del corte, o arriba / abajo para las mallas), sin repetir
+  en cada barra. El texto sale del nombre del tipo de barra de Revit y de la separación real
+  del conjunto.
+- **Cotas**: ancho total, **tramos** a lo largo del corte (murete / foso / núcleo / foso /
+  murete, obtenidos de los cruces de la línea de corte con las regiones), **profundidad del
+  foso** y **espesor de la base** (fondo de foso a cara inferior), y el canto total.
+- **Niveles a la derecha**: tope, fondo de cada foso y cara inferior, con la **cota real del
+  modelo**: elevación respecto al **punto base del proyecto** (por defecto), a las
+  **coordenadas compartidas** o interna, configurable (`levelReference` en `config.json` y
+  en la ventana). La capa Revit pasa el desfase; la clase pura solo suma.
+- **Recubrimientos**: con el interruptor activo se dibujan a trazos las líneas de
+  recubrimiento (inferior, superior, borde, muro) dentro del perfil.
+- Terreno bajo la cara inferior como en Zapatas.
+
+### Interacción
+
+- **Arrastrar las líneas de corte** A–A y B–B en la planta mueve el corte (dentro del
+  bloque, con imán al centro) y **las dos secciones se actualizan en vivo**; el rótulo del
+  título muestra la posición del corte (`A-A a v = 1.90 m`).
+- **Pasar el ratón por una barra** en cualquiera de las tres vistas la **resalta en las
+  otras dos** (misma barra, o su conjunto) y muestra familia, diámetro, separación y
+  longitud en un tooltip y en la barra de estado.
+- **Clic en una familia de la leyenda la aísla** (segundo clic: todas); se aplica a las
+  tres vistas.
+- **Zoom** con rueda, **arrastrar** para mover y **doble clic** para encajar, como en
+  Zapatas, **independiente en cada vista** (arrastrar sobre una línea de corte mueve el corte,
+  arrastrar sobre el fondo mueve la vista).
+- **Al cambiar de bloque** en la lista, las tres vistas se recalculan (cortes al centro del
+  nuevo bloque, zoom encajado).
+
+Todo el estado compartido vive en `PreviewState` (cortes, barra resaltada, familia aislada,
+capa de planta, interruptores); cada vista se suscribe y redibuja. La ventana recalcula
+`BlockPlan` al cambiar cualquier ajuste y `BlockSection.Cut` al mover un corte.
+
+### Lógica pura (`BlockSection`, probada en `Tests/`)
+
+`BlockSection.Cut(BlockPlan plan, BlockTopology topology, SectionLine line, double tol,
+Func<double, double?> perfilMuestreado = null)` devuelve un `SectionCut` con:
+
+- `Profile`: perfil del hormigón a lo largo de `s` (u en A-A, v en B-B): lista de tramos
+  `(s0, s1, zTop)` exactos a partir de la topología (regiones del tope, fosos, huecos), o
+  el muestreado si se pasa;
+- `Circles`: (barra, familia, s, z, diámetro) por cada tramo de polilínea que cruza el plano;
+- `Polylines`: (barra, familia, puntos (s, z), diámetro) de las barras contenidas en el plano;
+- `Segments`: tramos del corte con su tipo (murete / foso / núcleo / hueco) para las cotas;
+- `Levels`: tope, fondos de foso y cara inferior (z local y elevación);
+- `Labels`: un anclaje por familia y lado con el texto `ø{tipo}@{s}`.
+
+### Opcional (botón "Crear vistas de sección en Revit", después de Armar; fase 2b)
+
+- Crear dos `ViewSection` en Revit en las mismas líneas de corte A y B (`ViewFamilyType`
+  de sección, `BoundingBoxXYZ` con origen en el corte, `BasisX` a lo largo del corte,
+  `BasisY` vertical y `BasisZ` mirando como en la lámina), **escala 1:20**, **nivel de
+  detalle fino**, **crop ajustado al bloque más un margen configurable**
+  (`sectionViews.marginMm`, 500 por defecto). Nombres `"{marca} - Sección A"` y
+  `"{marca} - Sección B"` (plantilla `sectionViews.nameTemplate`; si ya existen se añade un
+  sufijo numérico).
+- Acero **visible sin ocultar** en esas vistas (`SetUnobscuredInView`) y, con la opción
+  `sectionViews.showSolid`, como sólido en las **vistas 3D** (`Rebar.SetSolidInView` solo
+  admite `View3D`: en las secciones el acero se muestra con su presentación de conjunto
+  completa, `SetPresentationMode(All)`).
+- Opcional: **una etiqueta de barra por conjunto** (`IndependentTag.Create`) con la familia
+  de etiqueta `sectionViews.tagFamilyName` de `config.json`. Si no está cargada en el
+  proyecto, no se etiqueta y se avisa en el informe.
+- Va en la fase de Revit; no bloquea la fase 1.
 
 ## 5. Valores por defecto (`config.json` inicial)
 
@@ -222,7 +317,10 @@ eléctrica N°1): recubrimientos 75 / 50 / 75 / 40, `wallMaxWidthMm` 300, F1 5/8
 abajo, F4 5/8"@125 vertical 1000 pie 370, F5 3/8"@200, F6 3/8"@125, F7 3/8"@125 patas 350,
 F8 3/8"@200, partición `BLQ-{marca}-{familia}`, tolerancia 2, barra mínima 300. Se añaden
 `anchorMm` (F2 `recess`, 600 por defecto), `lapMm` (anillos, 400) y `shape` / `faces`
-descritos arriba. El README recordará que las patas (300, 220, 340, 350) y F4 (1000/370) se
+descritos arriba, más los de la lámina: `levelReference` (`"project"` por defecto,
+`"shared"` o `"internal"`), `preview` (`showDims`, `showLabels`, `showCovers`, capa de
+planta por defecto `"F1"`) y `sectionViews` (`enabled` false, `scale` 20, `marginMm` 500,
+`nameTemplate` `"{marca} - Sección {letra}"`, `tagFamilyName` `""`, `showSolid` false). El README recordará que las patas (300, 220, 340, 350) y F4 (1000/370) se
 midieron a escala en el plano y que el murete lleva 3/8" por defecto (la sección A) aunque la
 sección B dice 5/8".
 
@@ -242,6 +340,14 @@ comprueba:
   3153 + 2 × 340 y 26 barras v), todas las barras dentro del hormigón en 2D (plataforma /
   murete / cuerpo según su cota), pie de F4 entre F1 y F2, F6 intercalada con F7, y la
   **tabla final** de cantidades, longitudes y peso por familia y diámetro impresa por consola.
+- `BlockSection` con el mismo caso: la **sección A-A por el centro** muestra F1, F2 y F3
+  como líneas en u y círculos en v; F4 como L en las dos caras del núcleo (vertical + pie
+  bajo el foso); F5 y F8 como círculos; F6 y F7 en los dos muretes (F6 vertical, F7 en U
+  invertida de cara a cara). El perfil topológico tiene los tramos murete 150 / foso 600 /
+  núcleo 3300 / foso 600 / murete 150, profundidad de foso 800 y base 500; los niveles son
+  tope, fondo de foso y cara inferior. **Se imprime el conteo de círculos por familia en A-A
+  y en B-B**, y se comprueba que una etiqueta por familia y lado no se repite. Mover el corte
+  fuera del núcleo (por el foso) cambia el perfil y deja F3/F4/F5 fuera del corte.
 - Casos extra: bloque sin fosos (rechazo que remite a Zapatas), canaleta abierta por un
   lado, dos fosos de distinta profundidad (F2 bajo el más profundo, F5 desde cada fondo),
   foso que choca el pie de F4 con F2 (se recoloca a media altura con aviso), región mixta
@@ -278,7 +384,12 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 6. **Un conjunto por familia, cara y tramo**: barras iguales equiespaciadas en un array;
    lo demás, barras sueltas.
 7. **Red de seguridad doble** y subtransacción por elemento, igual que Zapatas.
-8. **Dos secciones** (A: u-z, B: v-z) por el centro, con el perfil muestreado del sólido.
+8. **Lámina del plano**: planta a la izquierda con las líneas de corte A–A (u) y B–B (v)
+   arrastrables, secciones A-A y B-B apiladas a la derecha. La sección es una clase pura
+   (`BlockSection.Cut`) que se prueba en consola; la ventana solo dibuja su resultado. En
+   Revit el perfil es el muestreado del sólido; en los tests, el topológico.
+9. **Estado compartido** (`PreviewState`) entre las tres vistas: cortes, barra resaltada,
+   familia aislada e interruptores; zoom y desplazamiento propios de cada vista.
 
 ## Puntos a confirmar con el OK del plan
 
@@ -297,8 +408,9 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] Clonado y análisis de Acero-Zapatas (arquitectura, convenciones, tests).
 - [x] PLAN.md.
 - [ ] OK del usuario al plan.
-- [ ] Fase 1: clases puras + Tests (salida de los tests en el informe).
-- [ ] Fase 2: capa Revit, ventana, README, INSTALADOR, compilación.
+- [ ] Fase 1: clases puras (incluida `BlockSection`) + Tests (salida de los tests en el informe).
+- [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
+- [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
 - [ ] Fase 4 (opcional): rejillas de foso.
 
