@@ -120,7 +120,8 @@ namespace BlockRebar
 
             Title = "Armar bloques con foso";
             Width = 1560; Height = 940;
-            MinWidth = 1100; MinHeight = 680;
+            MinWidth = 900; MinHeight = 600;
+            ResizeMode = ResizeMode.CanResizeWithGrip;
             try
             {
                 Rect wa = SystemParameters.WorkArea;
@@ -166,7 +167,7 @@ namespace BlockRebar
             root.Children.Add(elements);
 
             var body = new Grid { Margin = new Thickness(0, 6, 0, 6) };
-            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(400) });
+            body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(450) });
             body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
             var left = new StackPanel();
@@ -185,7 +186,7 @@ namespace BlockRebar
             var scroll = new ScrollViewer
             {
                 Content = left, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Margin = new Thickness(0, 0, 8, 0)
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, Margin = new Thickness(0, 0, 8, 0)
             };
             Grid.SetColumn(scroll, 0);
             body.Children.Add(scroll);
@@ -436,7 +437,7 @@ namespace BlockRebar
             int r = 0;
             _svOn = new CheckBox { Content = "Crear las vistas de seccion A y B al armar", IsChecked = sv.Enabled, Margin = Pad };
             AddRow(grid, r++, "", _svOn, "Tras armar cada bloque se crean dos ViewSection en sus lineas de corte A-A y B-B, con el acero del plugin sin ocultar y, si hay familia de etiqueta, una etiqueta por conjunto y familia.");
-            var sc = new StackPanel { Orientation = Orientation.Horizontal };
+            var sc = new WrapPanel();
             _svScale = NumBox(sv.Scale); Hook(_svScale);
             sc.Children.Add(new TextBlock { Text = "1 :", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             sc.Children.Add(_svScale);
@@ -494,7 +495,7 @@ namespace BlockRebar
             int r = 0;
 
             // rejillas: modo y reparto
-            var mode = new StackPanel { Orientation = Orientation.Horizontal };
+            var mode = new WrapPanel();
             _gMode = Choice("G:mode", new[] { "model", "countOnly", "off" }, new[] { "modelar", "solo informe", "desactivado" }, g.Mode, 110);
             mode.Children.Add(_gMode);
             mode.Children.Add(new TextBlock { Text = "largo max.:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
@@ -502,7 +503,7 @@ namespace BlockRebar
             mode.Children.Add(new TextBlock { Text = "holgura:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             _gClear = Num("G:clear", g.ClearanceMm); mode.Children.Add(_gClear);
             AddRow(grid, r++, "Rejillas:", mode, "Modelar las rejillas (Generic Model), solo contarlas en el informe, o nada. Reparto por franja: n = techo(L / largo max.), pieza = L / n - holgura.");
-            var red = new StackPanel { Orientation = Orientation.Horizontal };
+            var red = new WrapPanel();
             _gRed = Num("G:red", g.WidthReductionMm); red.Children.Add(_gRed);
             red.Children.Add(new TextBlock { Text = "menos que el ancho del foso (mm)", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             AddRow(grid, r++, "Ancho de pieza:", red, "Ancho de la pieza = ancho de la franja del foso menos este valor (10 mm en el plano).");
@@ -517,19 +518,19 @@ namespace BlockRebar
             Grid.SetColumn(_gTypes, 0);
             types.Children.Add(_gTypes);
             var fields = new StackPanel();
-            var f1 = new StackPanel { Orientation = Orientation.Horizontal };
+            var f1 = new WrapPanel();
             f1.Children.Add(new TextBlock { Text = "nombre:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
             _gtName = new TextBox { Width = 150, Margin = Pad }; f1.Children.Add(_gtName);
             f1.Children.Add(new TextBlock { Text = "designacion:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             _gtDesig = new TextBox { Width = 80, Margin = Pad }; f1.Children.Add(_gtDesig);
             fields.Children.Add(f1);
-            var f2 = new StackPanel { Orientation = Orientation.Horizontal };
+            var f2 = new WrapPanel();
             f2.Children.Add(new TextBlock { Text = "alto (mm):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center, Width = 70 });
             _gtHeight = NumBox(38); f2.Children.Add(_gtHeight);
             f2.Children.Add(new TextBlock { Text = "peso (kg/m2):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             _gtKg = NumBox(31); f2.Children.Add(_gtKg);
             fields.Children.Add(f2);
-            var f3 = new StackPanel { Orientation = Orientation.Horizontal };
+            var f3 = new WrapPanel();
             var add = new Button { Content = "Anadir", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
             add.Click += (s, e) => { if (ReadGridTypeFields(out GridTypeCfg t, out string err)) { if (_gridTypes.Any(x => x.Name == t.Name)) { Message(err = "ya hay un tipo \"" + t.Name + "\""); return; } _gridTypes.Add(t); _gTypes.Items.Add(t.Name); _gTypes.SelectedIndex = _gTypes.Items.Count - 1; RefreshGridTypeCombos(); Refresh(); } else Message(err); };
             var save = new Button { Content = "Guardar cambios", Padding = new Thickness(8, 2, 8, 2), Margin = Pad };
@@ -562,7 +563,7 @@ namespace BlockRebar
             AddRow(grid, r++, "Tipo por defecto:", _gDefaultType, "Tipo de rejilla de los bloques sin tipo propio (se elige por bloque en la lista de arriba).");
 
             // familia de rejilla
-            var fam = new StackPanel { Orientation = Orientation.Horizontal };
+            var fam = new WrapPanel();
             _gFamilyName = new TextBox { Text = g.FamilyName, Width = 150, Margin = Pad }; Hook(_gFamilyName);
             fam.Children.Add(_gFamilyName);
             _gFamilyStatus = new TextBlock { Margin = Pad, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, MaxWidth = 180 };
@@ -579,7 +580,7 @@ namespace BlockRebar
             AddRow(grid, r++, "Familia:", fam, "Familia Generic Model de la rejilla (Largo, Ancho, Espesor de instancia). Si no esta cargada, el boton la crea.");
 
             // angulos
-            var ang = new StackPanel { Orientation = Orientation.Horizontal };
+            var ang = new WrapPanel();
             _gAnglesOn = new CheckBox { Content = "Colocar", IsChecked = an.Enabled, Margin = Pad, VerticalAlignment = VerticalAlignment.Center }; Hook(_gAnglesOn);
             ang.Children.Add(_gAnglesOn);
             _gAngleType = new ComboBox { Width = 230, Margin = Pad };
@@ -591,12 +592,12 @@ namespace BlockRebar
             AddRow(grid, r++, "Angulos:", ang, "Tipo de Structural Framing del angulo de borde (familia \"L-Angle\", tipo \"L2-1/2X2-1/2X1/4\" por defecto). Regla de nombres de los tipos de barra: exacto; fragmento unico; ambiguo en amarillo. Si no esta cargado no se colocan angulos y se avisa.");
             _gAngleStatus = new TextBlock { Foreground = RevitTheme.Muted, Margin = Pad, TextWrapping = TextWrapping.Wrap };
             AddRow(grid, r++, "", _gAngleStatus, null);
-            var ap = new StackPanel { Orientation = Orientation.Horizontal };
+            var ap = new WrapPanel();
             _gKgDefault = Num("G:kg", an.KgPerMDefault); ap.Children.Add(_gKgDefault);
             ap.Children.Add(new TextBlock { Text = "kg/m si no se lee W; pernos/angulo:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             _gBolts = Num("G:bolts", an.BoltsPerAngle); ap.Children.Add(_gBolts);
             AddRow(grid, r++, "Peso y pernos:", ap, "Peso lineal por defecto (catalogo: W = 4.10 lb/ft = 6.10 kg/m) cuando el tipo no tiene un parametro W legible, y pernos de expansion de 1/2\" por angulo (solo se cuentan).");
-            var ag = new StackPanel { Orientation = Orientation.Horizontal };
+            var ag = new WrapPanel();
             _gLeg = Num("G:leg", an.LegMm); ag.Children.Add(_gLeg);
             ag.Children.Add(new TextBlock { Text = "ala (mm), giro (grados):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
             _gRot = Num("G:rot", an.RotationDeg); ag.Children.Add(_gRot);
@@ -606,7 +607,7 @@ namespace BlockRebar
             foreach (AngleCategory c in AngleCategories.All)
             {
                 AngleCategoryCfg cc = an.Of(c);
-                var row = new StackPanel { Orientation = Orientation.Horizontal };
+                var row = new WrapPanel();
                 ComboBox m = Choice("G:" + c + ":mode", new[] { "fixedLength", "setback" }, new[] { "longitud fija", "retiro" }, cc.Mode, 110);
                 TextBox len = Num("G:" + c + ":len", cc.LengthMm);
                 TextBox sb = Num("G:" + c + ":sb", cc.SetbackMm);
@@ -741,10 +742,10 @@ namespace BlockRebar
 
         private UIElement BuildButtons()
         {
-            var panel = new DockPanel();
-            _message = new TextBlock { Foreground = RevitTheme.Error, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) };
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-            DockPanel.SetDock(buttons, Dock.Right);
+            var panel = new StackPanel();
+            _message = new TextBlock { Foreground = RevitTheme.Error, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 4) };
+            // los botones envuelven en varias lineas si no caben a lo ancho (antes se salian de la ventana)
+            var buttons = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
 
             _analyzeButton = new Button { Content = "Analizar sin armar", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
             _analyzeButton.ToolTip = "Informe de texto (copiable) con los solidos y caras leidos de cada bloque, sus cotas, los fondos de foso, las regiones del tope, " +
@@ -824,8 +825,9 @@ namespace BlockRebar
             var cancel = new Button { Content = "Cancelar", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 0, 0), IsCancel = true };
             buttons.Children.Add(cancel);
 
-            panel.Children.Add(buttons);
+            foreach (UIElement b in buttons.Children) if (b is FrameworkElement fe) fe.Margin = new Thickness(4, 2, 4, 2);
             panel.Children.Add(_message);
+            panel.Children.Add(buttons);
             return panel;
         }
 
