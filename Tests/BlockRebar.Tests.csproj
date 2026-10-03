@@ -20,6 +20,7 @@
     <Compile Include="..\BlockTopology.cs" Link="BlockTopology.cs" />
     <Compile Include="..\BlockPlan.cs" Link="BlockPlan.cs" />
     <Compile Include="..\BlockSection.cs" Link="BlockSection.cs" />
+    <Compile Include="..\ClashCheck.cs" Link="ClashCheck.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
     <Compile Include="..\PartitionName.cs" Link="PartitionName.cs" />
   </ItemGroup>

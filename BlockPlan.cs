@@ -281,6 +281,144 @@ namespace BlockRebar
 
         private double D(Family f, string layer = "") => Diam.D(f, layer);
 
+        /// <summary>
+        /// Posiciones entre "from" y "to": "maxSpacing" = reparto con separacion maxima
+        /// (n = techo(L / s) huecos iguales, barra en los dos extremos); "fromTop" = separacion
+        /// exacta desde "from" y la ultima barra donde caiga (sin forzar el otro extremo).
+        /// </summary>
+        private List<double> Spread(double from, double to, double s, string mode)
+        {
+            if (mode == "fromTop")
+            {
+                var list = new List<double>();
+                if (to - from < -_tol) return list;
+                if (s <= _tol) { list.Add(from); return list; }
+                for (double t = from; t <= to + _tol; t += s) list.Add(t);
+                return list;
+            }
+            return Geometry2D.Positions(from, to, s, _tol);
+        }
+
+        private static bool Overlap(double a0, double a1, double b0, double b1) => Math.Min(a1, b1) >= Math.Max(a0, b0);
+
+        /// <summary>Retranqueo extra de las patas de F2 en los bordes exteriores (diametro de F1 + propio).</summary>
+        private double LegClearF2 => (Cfg.F1.Enabled ? Math.Max(D(Family.F1, "u"), D(Family.F1, "v")) : 0) + Math.Max(D(Family.F2, "u"), D(Family.F2, "v"));
+
+        /// <summary>
+        /// Zona de patas de las mallas junto a las caras exteriores: hasta que distancia de la
+        /// cara llega el borde interior de la pata mas interior de las mallas cuyas patas
+        /// ocupan cotas entre zMin y zMax. Las barras que corren hacia una cara exterior (pies
+        /// de F4, prolongaciones de F5) y los verticales junto a ella (F4) paran antes.
+        /// </summary>
+        private double LegZone(double zMin, double zMax)
+        {
+            double zone = 0;
+            if (Cfg.F1.Enabled && Cfg.F1.LegUpMm > 0)
+            {
+                double leg = Mm(Cfg.F1.LegUpMm);
+                if (Overlap(_zF1u, _zF1v + leg, zMin, zMax)) zone = Math.Max(zone, Ce + D(Family.F1, "u") + D(Family.F1, "v"));
+            }
+            if (Cfg.F2.Enabled && Cfg.F2.LegDownMm > 0)
+            {
+                double leg = Mm(Cfg.F2.LegDownMm);
+                if (Overlap(_zF2v - leg, _zF2u, zMin, zMax)) zone = Math.Max(zone, Ce + LegClearF2 + D(Family.F2, "u") + D(Family.F2, "v"));
+            }
+            if (Cfg.F3.Enabled && Cfg.F3.LegDownMm > 0)
+            {
+                double leg = Mm(Cfg.F3.LegDownMm);
+                if (Overlap(_zF3v - leg, _zF3u, zMin, zMax)) zone = Math.Max(zone, Ce + D(Family.F3, "u") + D(Family.F3, "v"));
+            }
+            return zone;
+        }
+
+        /// <summary>
+        /// Coordenadas (t a lo largo de la arista) de las barras de malla que cruzan el plano
+        /// vertical de una familia de cara (perpendiculares a la cara, a cotas entre zMin y
+        /// zMax y cuyo tramo recto pasa por el plano a "offset" de la cara). Un vertical colocado
+        /// en esas t chocaria con ellas.
+        /// </summary>
+        private List<double> CrossingMeshCoords(RegionEdge edge, double offset, double zMin, double zMax, double tMin, double tMax, out double meshD)
+        {
+            var list = new List<double>();
+            meshD = 0;
+            if (!edge.AlongU && Math.Abs(edge.Dir.V) < 0.999) return list;
+            if (edge.AlongU && Math.Abs(edge.Dir.U) < 0.999) return list;
+            // barras perpendiculares a la cara: a lo largo de u si la cara va a lo largo de v, y al reves
+            string layer = edge.AlongU ? "v" : "u";
+            Pt plane = Geometry2D.Add(edge.Mid, Geometry2D.Scale(edge.Normal, offset));
+            foreach (PlannedBar b in Bars)
+            {
+                if (b.Layer != layer || (b.Family != Family.F1 && b.Family != Family.F2 && b.Family != Family.F3)) continue;
+                // cota del tramo recto (las patas no cruzan el plano en la cara)
+                double level = b.Points[Math.Min(1, b.Points.Count - 1)].Z;
+                if (level < zMin || level > zMax) continue;
+                double lo, hi, coord;
+                if (layer == "u") { lo = b.Points.Min(q => q.U); hi = b.Points.Max(q => q.U); coord = b.Points[1].V; if (plane.U < lo || plane.U > hi) continue; }
+                else { lo = b.Points.Min(q => q.V); hi = b.Points.Max(q => q.V); coord = b.Points[1].U; if (plane.V < lo || plane.V > hi) continue; }
+                double t = edge.AlongU ? (coord - edge.A.U) / edge.Dir.U : (coord - edge.A.V) / edge.Dir.V;
+                // solo las que cruzan el plano dentro del tramo de la cara (las de fuera no estorban)
+                if (t < tMin || t > tMax) continue;
+                list.Add(t);
+                meshD = Math.Max(meshD, b.D);
+            }
+            list.Sort();
+            return list;
+        }
+
+        /// <summary>
+        /// Posiciones entre t0 y t1 que esquivan una reticula de barras (coordenadas "grid",
+        /// paso g): el paso se toma igual a g (o g / k si g supera la separacion maxima) y la
+        /// fase se elige lo mas centrada posible dentro de la banda libre (a mas de "clearance"
+        /// de cada barra de la reticula). Null si no hay reticula o no cabe.
+        /// </summary>
+        private List<double> SnapPositions(double t0, double t1, double s, List<double> grid, double clearance, out string why)
+        {
+            why = null;
+            if (grid == null || grid.Count < 2) return null;
+            var gaps = new List<double>();
+            for (int i = 0; i + 1 < grid.Count; i++) gaps.Add(grid[i + 1] - grid[i]);
+            gaps.Sort();
+            double g = gaps[gaps.Count / 2];
+            if (g <= _tol) return null;
+            int k = Math.Max(1, (int)Math.Ceiling(g / s - 1e-9));
+            double step = g / k;
+            if (step < 2 * clearance) { why = "la reticula de la malla (paso " + ToMm(g) + " mm) no deja hueco libre"; return null; }
+            double len = t1 - t0;
+            int m = (int)Math.Floor(len / step + 1e-9);
+            double phi = t0 + 0.5 * (len - m * step);
+            double r = ((phi - grid[0]) % step + step) % step;
+            if (r < clearance) phi += clearance - r;
+            else if (r > step - clearance) phi -= r - (step - clearance);
+            var pos = new List<double>();
+            for (int i = 0; i <= m + 1; i++)
+            {
+                double t = phi + i * step;
+                if (t < t0 - _tol) continue;
+                if (t > t1 + _tol) break;
+                pos.Add(t);
+            }
+            return pos;
+        }
+
+        /// <summary>
+        /// Niveles entre z0 (abajo) y z1 (arriba): "fromTop" = separacion exacta desde el nivel
+        /// superior hacia abajo, el resto queda abajo (como en el plano); "maxSpacing" = reparto
+        /// con nivel en los dos extremos.
+        /// </summary>
+        private List<double> LevelsBetween(double z0, double z1, double s, string mode)
+        {
+            if (mode == "fromTop")
+            {
+                var list = new List<double>();
+                if (z1 - z0 < -_tol) return list;
+                if (s <= _tol) { list.Add(z1); return list; }
+                for (double z = z1; z >= z0 - _tol; z -= s) list.Add(z);
+                list.Reverse();
+                return list;
+            }
+            return Geometry2D.Positions(z0, z1, s, _tol);
+        }
+
         /// <summary>Cotas de las mallas y comprobacion de que no se solapan.</summary>
         private void Levels()
         {
@@ -358,8 +496,8 @@ namespace BlockRebar
             double leg = Mm(Cfg.F1.LegUpMm);
             foreach (MeshRegion mr in BodyRegions())
             {
-                Mesh(Family.F1, "u", mr, e => Ce, 0, _zF1u, du, Mm(Cfg.F1.U.SpacingMm), leg, k => k == EdgeKind.Exterior);
-                Mesh(Family.F1, "v", mr, e => Ce, du, _zF1v, dv, Mm(Cfg.F1.V.SpacingMm), leg, k => k == EdgeKind.Exterior);
+                Mesh(Family.F1, "u", mr, e => Ce, 0, _zF1u, du, Mm(Cfg.F1.U.SpacingMm), Cfg.F1.U.LayoutMode, leg, k => k == EdgeKind.Exterior);
+                Mesh(Family.F1, "v", mr, e => Ce, du, _zF1v, dv, Mm(Cfg.F1.V.SpacingMm), Cfg.F1.V.LayoutMode, leg, k => k == EdgeKind.Exterior);
             }
         }
 
@@ -388,10 +526,31 @@ namespace BlockRebar
                 if (clipped.Count == 0) Warn("F2: la zona bajo los fosos queda vacia");
             }
             else regions = BodyRegions();
+            // en los bordes exteriores las patas de F2 bajan por dentro de las de F1: se retranquea
+            // el diametro de F1 mas el propio (asi queda un diametro libre entre ambas patas)
+            double legClear = (Cfg.F1.Enabled ? Math.Max(D(Family.F1, "u"), D(Family.F1, "v")) : 0) + Math.Max(du, dv);
+            Func<RegionEdge, double> cover = e => e.Kind == EdgeKind.Exterior ? Ce + legClear : (e.Kind == EdgeKind.Free ? 0 : Ce);
+            // planos de los verticales de F4 (a cw + d4/2 de cada cara de foso de plataforma, en
+            // caras paralelas a los ejes): las barras de la malla paralelas a esos planos los esquivan
+            var planesV = new List<double>();   // planos v = cte (caras a lo largo de u): los esquivan las barras u
+            var planesU = new List<double>();   // planos u = cte (caras a lo largo de v): los esquivan las barras v
+            double clearance = 0;
+            if (Cfg.F4.Enabled)
+            {
+                double d4 = D(Family.F4), o4 = Cw + 0.5 * d4;
+                clearance = 0.5 * d4 + 0.5 * Math.Max(du, dv) + _tol + Mm(1);
+                foreach (TopRegion reg in Topo.Regions.Where(r => r.Kind == RegionKind.Platform))
+                    foreach (RegionEdge e in reg.Edges.Where(e => e.Kind == EdgeKind.Recess))
+                    {
+                        Pt plane = Geometry2D.Add(e.Mid, Geometry2D.Scale(e.Normal, o4));
+                        if (Math.Abs(e.Dir.U) > 0.999) planesV.Add(plane.V);
+                        else if (Math.Abs(e.Dir.V) > 0.999) planesU.Add(plane.U);
+                    }
+            }
             foreach (MeshRegion mr in regions)
             {
-                Mesh(Family.F2, "u", mr, e => e.Kind == EdgeKind.Free ? 0 : Ce, 0, _zF2u, du, Mm(Cfg.F2.U.SpacingMm), leg, k => k == EdgeKind.Exterior);
-                Mesh(Family.F2, "v", mr, e => e.Kind == EdgeKind.Free ? 0 : Ce, du, _zF2v, dv, Mm(Cfg.F2.V.SpacingMm), leg, k => k == EdgeKind.Exterior);
+                Mesh(Family.F2, "u", mr, cover, 0, _zF2u, du, Mm(Cfg.F2.U.SpacingMm), Cfg.F2.U.LayoutMode, leg, k => k == EdgeKind.Exterior, planesV, clearance);
+                Mesh(Family.F2, "v", mr, cover, du, _zF2v, dv, Mm(Cfg.F2.V.SpacingMm), Cfg.F2.V.LayoutMode, leg, k => k == EdgeKind.Exterior, planesU, clearance);
             }
         }
 
@@ -426,8 +585,8 @@ namespace BlockRebar
                     }
                 };
                 Func<EdgeKind, bool> legAt = k => k == EdgeKind.Exterior || k == EdgeKind.Recess || k == EdgeKind.Hole;
-                Mesh(Family.F3, "u", mr, cover, 0, _zF3u, du, Mm(Cfg.F3.U.SpacingMm), leg, legAt);
-                Mesh(Family.F3, "v", mr, cover, du, _zF3v, dv, Mm(Cfg.F3.V.SpacingMm), leg, legAt);
+                Mesh(Family.F3, "u", mr, cover, 0, _zF3u, du, Mm(Cfg.F3.U.SpacingMm), Cfg.F3.U.LayoutMode, leg, legAt);
+                Mesh(Family.F3, "v", mr, cover, du, _zF3v, dv, Mm(Cfg.F3.V.SpacingMm), Cfg.F3.V.LayoutMode, leg, legAt);
             }
         }
 
@@ -440,7 +599,7 @@ namespace BlockRebar
         /// extremos va recta y llega al recubrimiento.
         /// </summary>
         private void Mesh(Family f, string layer, MeshRegion mr, Func<RegionEdge, double> coverOf, double extra, double z, double d,
-                          double spacing, double leg, Func<EdgeKind, bool> legAt)
+                          double spacing, string mode, double leg, Func<EdgeKind, bool> legAt, List<double> obstacles = null, double clearance = 0)
         {
             bool alongU = layer == "u";
             var byKey = mr.Edges.ToDictionary(e => (e.Ring, e.Index), e => e);
@@ -452,7 +611,10 @@ namespace BlockRebar
             if (to - from < -_tol) { Warn(Families.Code(f) + " (" + layer + "): no cabe en " + mr.Name); return; }
             P3 normal = alongU ? P3.AxisV : P3.AxisU;
             Pt barDir = alongU ? new Pt(1, 0) : new Pt(0, 1);
-            foreach (double c in Geometry2D.Positions(from, to, spacing, _tol))
+            List<double> coords = Spread(from, to, spacing, mode);
+            if (obstacles != null && obstacles.Count > 0)
+                coords = AvoidObstacles(coords, from, to, spacing, mode, obstacles, clearance, Families.Code(f) + " (" + layer + ")");
+            foreach (double c in coords)
                 foreach (Span s in outline.Cut(alongU, c, 0, _tol))
                 {
                     if (s.Length < Math.Max(_minLen, _tol)) { Skipped++; continue; }
@@ -471,6 +633,35 @@ namespace BlockRebar
                     if (l1) pts.Add(new P3(p1, z + leg));
                     Bars.Add(new PlannedBar { Family = f, Layer = layer, Points = pts, D = d, Normal = normal, Face = mr.Name, RegionIndex = mr.RegionIndex, NominalSpacing = spacing });
                 }
+        }
+
+        /// <summary>
+        /// Si alguna posicion de la malla queda a menos de "clearance" de un plano de verticales
+        /// (F4 en las caras de foso), se reparte con mas barras (paso menor, siempre bajo la
+        /// separacion maxima) hasta que ninguna coincida. Si no se consigue, aviso.
+        /// </summary>
+        private List<double> AvoidObstacles(List<double> coords, double from, double to, double spacing, string mode, List<double> obstacles, double clearance, string what)
+        {
+            Func<List<double>, bool> clear = cs => cs.All(c => obstacles.All(o => Math.Abs(c - o) >= clearance));
+            if (clear(coords)) return coords;
+            if (mode == "maxSpacing" && to - from > _tol)
+            {
+                int n = Math.Max(1, coords.Count - 1);
+                for (int extra = 1; extra <= 12; extra++)
+                {
+                    int n2 = n + extra;
+                    double step = (to - from) / n2;
+                    var cs = new List<double>();
+                    for (int k = 0; k <= n2; k++) cs.Add(from + k * step);
+                    if (clear(cs))
+                    {
+                        Warn(what + ": se reparte con " + (n2 + 1) + " barras en vez de " + (n + 1) + " (paso " + ToMm(step) + " mm) para no coincidir con los verticales de F4");
+                        return cs;
+                    }
+                }
+            }
+            Warn(what + ": alguna barra coincide con un vertical de F4; revisa la separacion");
+            return coords;
         }
 
         /// <summary>
@@ -512,15 +703,19 @@ namespace BlockRebar
         }
 
         /// <summary>Region retranqueada el recubrimiento + medio diametro en cada arista: donde pueden ir los ejes de barras de diametro d.</summary>
-        private Outline2D Clamp(TopRegion reg, double d)
+        /// <param name="exteriorMin">Distancia minima adicional a las caras exteriores (zona de patas de las mallas), 0 = solo el recubrimiento.</param>
+        private Outline2D Clamp(TopRegion reg, double d, double exteriorMin = 0)
         {
-            string key = reg.Index + ":" + d.ToString("R", CultureInfo.InvariantCulture);
+            string key = reg.Index + ":" + d.ToString("R", CultureInfo.InvariantCulture) + ":" + exteriorMin.ToString("R", CultureInfo.InvariantCulture);
             if (_clamps.TryGetValue(key, out Outline2D o)) return o;
             var byKey = reg.Edges.ToDictionary(e => (e.Ring, e.Index), e => e);
             List<Region2D> parts = Poly2D.InsetByEdge(reg.Shape, (ring, idx) =>
             {
                 if (!byKey.TryGetValue((ring, idx), out RegionEdge e)) return 0.5 * d;
-                return e.Kind == EdgeKind.Internal || e.Kind == EdgeKind.Free ? 0 : CoverOf(reg, e) + 0.5 * d;
+                if (e.Kind == EdgeKind.Internal || e.Kind == EdgeKind.Free) return 0;
+                double inset = CoverOf(reg, e) + 0.5 * d;
+                if ((e.Kind == EdgeKind.Exterior || e.Kind == EdgeKind.Hole) && exteriorMin > 0) inset = Math.Max(inset, exteriorMin + 0.5 * d + _tol);
+                return inset;
             }, _tol);
             o = parts.Count == 0 ? null : new Outline2D(parts.SelectMany(r => r.Rings()), _tol);
             _clamps[key] = o;
@@ -643,8 +838,6 @@ namespace BlockRebar
                     faceNo++;
                     string face = "plataforma " + (reg.KindIndex + 1) + " cara " + faceNo;
                     Recess rc = Topo.Recesses[edge.RecessIndex];
-                    double t0 = CornerInset(reg, edge, true, d4), t1 = edge.Length - CornerInset(reg, edge, false, d4);
-                    if (t1 - t0 < -_tol) { Warn("F4: " + face + " demasiado corta"); continue; }
 
                     // pie bajo el fondo del foso
                     double zFoot = zTop4 - vertical;
@@ -675,12 +868,22 @@ namespace BlockRebar
                         Error = "F4: el pie en " + face + " queda bajo el recubrimiento inferior (z=" + ToMm(zFoot) + " mm); reduce verticalMm";
                         return;
                     }
-                    // sitio para el pie hacia el foso (hasta el recubrimiento de la cara opuesta del cuerpo)
-                    Pt mid2 = Geometry2D.Add(edge.At(0.5 * (t0 + t1)), Geometry2D.Scale(edge.Normal, o4));
+                    // los pies de caras contiguas convergen en las esquinas entrantes (fosos) a la misma
+                    // cota: los de las caras a lo largo de v van un diametro mas abajo (contacto previsto)
+                    if (!edge.AlongU)
+                    {
+                        if (zFoot - d4 - 0.5 * d4 >= lo + _tol) zFoot -= d4;
+                        else if (zFoot + d4 + 0.5 * d4 <= hi - _tol && zFoot + d4 <= maxFoot + _tol) zFoot += d4;
+                        else { Error = "F4: no hay sitio para desfasar un diametro los pies de " + face; return; }
+                    }
+                    // sitio para el pie hacia el foso: hasta el recubrimiento de la cara opuesta del cuerpo,
+                    // sin entrar en la zona de patas de las mallas junto a esa cara
+                    Pt mid2 = Geometry2D.Add(edge.At(0.5 * edge.Length), Geometry2D.Scale(edge.Normal, o4));
                     Pt outward = Geometry2D.Scale(edge.Normal, -1);
+                    double footZone = LegZone(zFoot - 0.5 * d4, zFoot + 0.5 * d4);
                     double room = double.MaxValue;
                     foreach (Span sp in Geometry2D.LineCut(Topo.Bottom, mid2, outward, 0, _tol))
-                        if (sp.A <= _tol && sp.B > _tol) { room = sp.B - Ce; break; }
+                        if (sp.A <= _tol && sp.B > _tol) { room = sp.B - Math.Max(Ce, footZone + 0.5 * d4 + _tol); break; }
                     double footLen = foot;
                     if (room < footLen - _tol)
                     {
@@ -692,8 +895,13 @@ namespace BlockRebar
                         Error = "F4: el pie no cabe en " + face + " (solo " + ToMm(footLen) + " mm hasta la cara opuesta)";
                         return;
                     }
+                    // posiciones: regla de esquinas; junto a una cara exterior, fuera de la zona de patas
+                    // de las mallas; y esquivando las barras de F2 que cruzan el plano del vertical
+                    double zone = LegZone(zFoot - 0.5 * d4, zTop4);
+                    List<double> pos = F4Positions(reg, edge, d4, s, zone + 0.5 * d4 + _tol, zFoot - 0.5 * d4, zTop4, face);
+                    if (pos.Count == 0) { Warn("F4: " + face + " demasiado corta"); continue; }
                     P3 normal = new P3(edge.Dir.U, edge.Dir.V, 0);
-                    foreach (double t in Geometry2D.Positions(t0, t1, s, _tol))
+                    foreach (double t in pos)
                     {
                         Pt b = Geometry2D.Add(edge.At(t), Geometry2D.Scale(edge.Normal, o4));
                         Pt fe = Geometry2D.Add(b, Geometry2D.Scale(outward, footLen));
@@ -707,28 +915,66 @@ namespace BlockRebar
             }
         }
 
+        /// <summary>
+        /// Posiciones de F4 a lo largo de una cara de foso: regla de esquinas con las caras de
+        /// foso contiguas; junto a una esquina con cara exterior, el primer vertical queda fuera
+        /// de la zona de patas de las mallas ("exteriorInset"); y si las barras de F2 cruzan el
+        /// plano del vertical, las posiciones se ajustan a su reticula para pasar entre ellas.
+        /// </summary>
+        private List<double> F4Positions(TopRegion reg, RegionEdge edge, double d, double s, double exteriorInset, double zMin, double zMax, string face)
+        {
+            Func<RegionEdge, bool> same = e => e.Kind == EdgeKind.Recess;
+            Func<RegionEdge, bool> ext = e => e.Kind == EdgeKind.Exterior || e.Kind == EdgeKind.Hole;
+            bool prevOwns = edge.Prev != null && same(edge.Prev) && edge.ConvexStart;
+            double t1 = edge.Length - CornerInset(reg, edge, false, d);
+            if (edge.Next != null && ext(edge.Next) && edge.ConvexEnd) t1 = Math.Min(t1, edge.Length - exteriorInset);
+            double t0, cornerBar = double.NaN;
+            if (prevOwns) { cornerBar = CoverOf(reg, edge.Prev) + 0.5 * d; t0 = cornerBar + s; }
+            else
+            {
+                t0 = CornerInset(reg, edge, true, d);
+                if (edge.Prev != null && ext(edge.Prev) && edge.ConvexStart) t0 = Math.Max(t0, exteriorInset);
+            }
+            if (t1 - t0 < -_tol)
+            {
+                var one = new List<double>();
+                if (prevOwns && t1 - cornerBar >= 2 * d) one.Add(t1);
+                return one;
+            }
+            // solo las barras de malla que cruzan el plano dentro del tramo util de la cara: las de
+            // fuera (p. ej. las de F3 que rodean el foso) no estorban y falsearian la reticula
+            List<double> grid = CrossingMeshCoords(edge, Cw + 0.5 * d, zMin, zMax, t0, t1, out double meshD);
+            if (grid.Count >= 2)
+            {
+                double clearance = 0.5 * d + 0.5 * meshD + _tol + Mm(1);
+                List<double> snapped = SnapPositions(t0, t1, s, grid, clearance, out string why);
+                if (snapped != null && snapped.Count > 0) return snapped;
+                Warn("F4: en " + face + " no se pueden esquivar las barras de la malla (" + why + ")");
+            }
+            return Spread(t0, t1, s, Cfg.F4.LayoutMode);
+        }
+
         // -----------------------------------------------------------------
         // F5: horizontales en caras de foso de plataforma (por dentro de F4 y de las patas de F3)
         // -----------------------------------------------------------------
 
-        /// <summary>Diametro de la capa de F3 cuyas patas bajan por esta cara: barras u en caras perpendiculares a u, v en las perpendiculares a v.</summary>
-        private double F3LegDiameter(RegionEdge edge)
-        {
-            if (!Cfg.F3.Enabled) return 0;
-            // cara perpendicular a u (arista a lo largo de v): patas de las barras u
-            return edge.AlongU ? D(Family.F3, "v") : D(Family.F3, "u");
-        }
-
+        /// <summary>
+        /// Plano de F5: por dentro de F4 y de la pata MAS interior de F3 (la de las barras v,
+        /// que se retranquean un diametro mas que las u), el mismo en todas las caras y en toda
+        /// la altura.
+        /// </summary>
         private double OffsetF5(RegionEdge edge) =>
-            Cw + (Cfg.F4.Enabled ? D(Family.F4) : 0) + F3LegDiameter(edge) + 0.5 * D(Family.F5);
+            Cw + (Cfg.F4.Enabled ? D(Family.F4) : 0) + (Cfg.F3.Enabled ? D(Family.F3, "u") + D(Family.F3, "v") : 0) + 0.5 * D(Family.F5);
 
         private void BuildF5()
         {
             double d5 = D(Family.F5), s = Mm(Cfg.F5.SpacingMm), lap = Mm(Cfg.F5.LapMm);
             double zTop5 = Thickness - Ct - (Cfg.F3.Enabled ? D(Family.F3, "u") + D(Family.F3, "v") : 0) - 0.5 * d5;
+            // las prolongaciones hacia las caras exteriores paran antes de la zona de patas de las mallas
+            double zoneF5 = LegZone(Topo.DeepestFloor, zTop5);
             foreach (TopRegion reg in Topo.Regions.Where(r => r.Kind == RegionKind.Platform))
             {
-                Outline2D clamp = Clamp(reg, d5);
+                Outline2D clamp = Clamp(reg, d5, zoneF5);
                 bool ring = false;
                 if (Cfg.F5.Shape == "ring")
                 {
@@ -743,7 +989,7 @@ namespace BlockRebar
                             double zFloor = reg.Edges.Where(e => e.Ring == ringIdx).Max(e => Topo.Recesses[e.RecessIndex].ZFloor);
                             double z0 = zFloor + Cw + 0.5 * d5;
                             string face = "plataforma " + (reg.KindIndex + 1) + " anillo";
-                            foreach (double z in Geometry2D.Positions(z0, zTop5, s, _tol))
+                            foreach (double z in LevelsBetween(z0, zTop5, s, Cfg.F5.LayoutMode))
                                 Bars.Add(new PlannedBar { Family = Family.F5, D = d5, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = poly.Select(p => new P3(p, z)).ToList() });
                             ring = true;
                         }
@@ -764,8 +1010,71 @@ namespace BlockRebar
                     if (tEnd - tStart < _minLen) { Skipped++; continue; }
                     Pt origin = Geometry2D.Add(edge.A, Geometry2D.Scale(edge.Normal, o));
                     Pt p0 = Geometry2D.Add(origin, Geometry2D.Scale(edge.Dir, tStart)), p1 = Geometry2D.Add(origin, Geometry2D.Scale(edge.Dir, tEnd));
-                    foreach (double z in Geometry2D.Positions(z0, zTop5, s, _tol))
-                        Bars.Add(new PlannedBar { Family = Family.F5, D = d5, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = new List<P3> { new P3(p0, z), new P3(p1, z) } });
+                    // los tramos prolongados de caras perpendiculares se cruzarian en la esquina al mismo
+                    // nivel: los de las caras a lo largo de v van un diametro mas abajo (contacto previsto)
+                    double shift = edge.AlongU ? 0 : -d5;
+                    foreach (double z in LevelsBetween(z0, zTop5, s, Cfg.F5.LayoutMode))
+                        Bars.Add(new PlannedBar { Family = Family.F5, D = d5, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = new List<P3> { new P3(p0, z + shift), new P3(p1, z + shift) } });
+                }
+            }
+            MergeCollinear(Family.F5);
+        }
+
+        /// <summary>
+        /// Tramos rectos de la misma familia, cota y recta que se solapan o se tocan (p. ej. las
+        /// prolongaciones de dos fosos alineados sobre la misma cara) se funden en una sola barra.
+        /// </summary>
+        private void MergeCollinear(Family f)
+        {
+            var straight = Bars.Where(b => b.Family == f && b.Points.Count == 2).ToList();
+            if (straight.Count < 2) return;
+            var groups = new Dictionary<string, List<PlannedBar>>();
+            foreach (PlannedBar b in straight)
+            {
+                P3 d = b.Points[1] - b.Points[0];
+                bool alongU = Math.Abs(d.U) >= Math.Abs(d.V);
+                if (Math.Abs(d.Z) > _tol) continue;
+                if (alongU && Math.Abs(d.V) > _tol) continue;
+                if (!alongU && Math.Abs(d.U) > _tol) continue;
+                double line = alongU ? b.Points[0].V : b.Points[0].U;
+                string key = (alongU ? "u" : "v") + ":" + Math.Round(b.Points[0].Z / _tol) + ":" + Math.Round(line / _tol) + ":" + Math.Round(b.D * 1e4);
+                if (!groups.TryGetValue(key, out List<PlannedBar> list)) groups[key] = list = new List<PlannedBar>();
+                list.Add(b);
+            }
+            foreach (List<PlannedBar> list in groups.Values)
+            {
+                if (list.Count < 2) continue;
+                bool alongU = list[0].Points[1].U - list[0].Points[0].U != 0 && Math.Abs(list[0].Points[1].U - list[0].Points[0].U) >= Math.Abs(list[0].Points[1].V - list[0].Points[0].V);
+                Func<PlannedBar, (double a, double b)> span = b =>
+                {
+                    double a = alongU ? b.Points[0].U : b.Points[0].V, c = alongU ? b.Points[1].U : b.Points[1].V;
+                    return (Math.Min(a, c), Math.Max(a, c));
+                };
+                var sorted = list.OrderBy(b => span(b).a).ToList();
+                var merged = new List<List<PlannedBar>>();
+                double end = double.NegativeInfinity;
+                foreach (PlannedBar b in sorted)
+                {
+                    (double a, double c) = span(b);
+                    if (merged.Count > 0 && a <= end + _tol) { merged[merged.Count - 1].Add(b); end = Math.Max(end, c); }
+                    else { merged.Add(new List<PlannedBar> { b }); end = c; }
+                }
+                foreach (List<PlannedBar> m in merged)
+                {
+                    if (m.Count < 2) continue;
+                    double a = m.Min(b => span(b).a), c = m.Max(b => span(b).b);
+                    PlannedBar first = m[0];
+                    P3 p0 = first.Points[0], p1 = first.Points[1];
+                    var nb = new PlannedBar
+                    {
+                        Family = f, D = first.D, Normal = first.Normal, NominalSpacing = first.NominalSpacing, RegionIndex = first.RegionIndex,
+                        Face = string.Join(" + ", m.Select(b => b.Face).Distinct().OrderBy(x => x, StringComparer.Ordinal)),
+                        Points = alongU
+                            ? new List<P3> { new P3(a, p0.V, p0.Z), new P3(c, p0.V, p0.Z) }
+                            : new List<P3> { new P3(p0.U, a, p0.Z), new P3(p0.U, c, p0.Z) }
+                    };
+                    foreach (PlannedBar b in m) Bars.Remove(b);
+                    Bars.Add(nb);
                 }
             }
         }
@@ -774,12 +1083,35 @@ namespace BlockRebar
         // Murete: F6 verticales, F7 horquillas, F8 horizontales
         // -----------------------------------------------------------------
 
-        private List<double> WallPositions(TopRegion reg, RegionEdge edge, double d, double s)
+        /// <summary>
+        /// Posiciones (t a lo largo de la arista) de las barras de una familia de cara (F4, F6,
+        /// F7). Regla de esquinas: la barra de esquina pertenece a UNA sola cara, la que llega a
+        /// la esquina (su ultimo reparto, a recubrimiento + 1.5 d del vertice); la cara que sale
+        /// de la esquina empieza su reparto a una separacion de esa barra o, si es demasiado
+        /// corta para ello, termina antes con una sola barra en su otro extremo. Asi no se
+        /// duplican barras en las esquinas.
+        /// </summary>
+        private List<double> FacePositions(TopRegion reg, RegionEdge edge, double d, double s, string mode, Func<RegionEdge, bool> sameFamily)
         {
-            double t0 = CornerInset(reg, edge, true, d), t1 = edge.Length - CornerInset(reg, edge, false, d);
-            if (t1 - t0 < -_tol) return new List<double>();
-            return Geometry2D.Positions(t0, t1, s, _tol);
+            bool prevOwns = edge.Prev != null && sameFamily(edge.Prev) && edge.ConvexStart;
+            double t1 = edge.Length - CornerInset(reg, edge, false, d);
+            double t0, cornerBar = double.NaN;
+            if (prevOwns)
+            {
+                // la barra de esquina de la cara anterior esta a su recubrimiento + d/2 de aquella cara:
+                // esa es su distancia al vertice medida a lo largo de esta cara
+                cornerBar = CoverOf(reg, edge.Prev) + 0.5 * d;
+                t0 = cornerBar + s;
+            }
+            else t0 = CornerInset(reg, edge, true, d);
+            if (t1 - t0 >= -_tol) return Spread(t0, t1, s, mode);
+            var one = new List<double>();
+            if (prevOwns && t1 - cornerBar >= 2 * d) one.Add(t1);   // cara corta: termina antes, sin duplicar la esquina
+            return one;
         }
+
+        private List<double> WallPositions(TopRegion reg, RegionEdge edge, double d, double s, string mode) =>
+            FacePositions(reg, edge, d, s, mode, e => e.Kind == EdgeKind.Exterior);
 
         /// <summary>Ancho del murete en una posicion de su cara exterior (sonda perpendicular) y tipo de la cara opuesta.</summary>
         private bool WallWidthAt(TopRegion reg, RegionEdge edge, double t, out double width, out EdgeKind opposite)
@@ -812,7 +1144,7 @@ namespace BlockRebar
                     if (edge.Kind != EdgeKind.Exterior) continue;
                     faceNo++;
                     string face = "murete " + (reg.KindIndex + 1) + " tramo " + faceNo;
-                    List<double> pos = WallPositions(reg, edge, d6, s);
+                    List<double> pos = WallPositions(reg, edge, d6, s, Cfg.F6.LayoutMode);
                     _f6Positions[edge] = pos;
                     if (pos.Count == 0) { Warn("F6: " + face + " demasiado corto"); continue; }
                     P3 normal = new P3(edge.Dir.U, edge.Dir.V, 0);
@@ -845,7 +1177,7 @@ namespace BlockRebar
                     string face = "murete " + (reg.KindIndex + 1) + " tramo " + faceNo;
                     List<double> pos;
                     if (Cfg.F6.Enabled && _f6Positions.TryGetValue(edge, out List<double> f6)) pos = f6;
-                    else pos = WallPositions(reg, edge, d7, s);
+                    else pos = WallPositions(reg, edge, d7, s, Cfg.F7.LayoutMode);
                     if (Cfg.F7.Placement == "staggered" && pos.Count >= 2)
                         pos = pos.Take(pos.Count - 1).Select(t => t + 0.5 * s).Where(t => t < pos[pos.Count - 1]).ToList();
                     if (pos.Count == 0) continue;
@@ -895,7 +1227,8 @@ namespace BlockRebar
         private void BuildF8()
         {
             double d8 = D(Family.F8), s = Mm(Cfg.F8.SpacingMm), lap = Mm(Cfg.F8.LapMm);
-            double z0 = Cfg.F1.Enabled ? _f1Top + 0.5 * d8 : Cb + 0.5 * d8;
+            // el primer nivel posible queda medio diametro libre por encima de F1 (sin contacto)
+            double z0 = Cfg.F1.Enabled ? _f1Top + d8 : Cb + 0.5 * d8;
             double z1 = Thickness - Ct - (Cfg.F7.Enabled ? D(Family.F7) : 0) - 0.5 * d8;
             if (z1 - z0 < -_tol) { Warn("F8: no hay altura para las horizontales del murete"); return; }
             LayerZ["F8"] = z1;
@@ -911,6 +1244,7 @@ namespace BlockRebar
                     WallHorizontals(reg, clamp, EdgeKind.Recess, OffsetF8Recess, zFloor + Cw + 0.5 * d8, z1, s, lap, d8, " interior");
                 }
             }
+            MergeCollinear(Family.F8);
         }
 
         private void WallHorizontals(TopRegion reg, Outline2D clamp, EdgeKind kind, double o, double z0, double z1, double s, double lap, double d8, string suffix)
@@ -923,7 +1257,7 @@ namespace BlockRebar
                 if (poly != null)
                 {
                     string face = "murete " + (reg.KindIndex + 1) + " anillo" + suffix;
-                    foreach (double z in Geometry2D.Positions(z0, z1, s, _tol))
+                    foreach (double z in LevelsBetween(z0, z1, s, Cfg.F8.LayoutMode))
                         Bars.Add(new PlannedBar { Family = Family.F8, D = d8, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = poly.Select(p => new P3(p, z)).ToList() });
                     return;
                 }
@@ -939,8 +1273,10 @@ namespace BlockRebar
                 if (tEnd - tStart < _minLen) { Skipped++; continue; }
                 Pt origin = Geometry2D.Add(edge.A, Geometry2D.Scale(edge.Normal, o));
                 Pt p0 = Geometry2D.Add(origin, Geometry2D.Scale(edge.Dir, tStart)), p1 = Geometry2D.Add(origin, Geometry2D.Scale(edge.Dir, tEnd));
-                foreach (double z in Geometry2D.Positions(z0, z1, s, _tol))
-                    Bars.Add(new PlannedBar { Family = Family.F8, D = d8, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = new List<P3> { new P3(p0, z), new P3(p1, z) } });
+                // los tramos de las caras a lo largo de v van un diametro mas abajo para no cruzarse en la esquina
+                double shift = edge.AlongU ? 0 : -d8;
+                foreach (double z in LevelsBetween(z0, z1, s, Cfg.F8.LayoutMode))
+                    Bars.Add(new PlannedBar { Family = Family.F8, D = d8, Normal = P3.Up, Face = face, RegionIndex = reg.Index, NominalSpacing = s, Points = new List<P3> { new P3(p0, z + shift), new P3(p1, z + shift) } });
             }
         }
 

@@ -225,8 +225,11 @@ namespace BlockRebar
                 List<Region2D> open = Poly2D.Opening(new[] { comp }, r, Tol).Where(p => p.Area > sliver).ToList();
                 platforms.AddRange(open);
                 List<Region2D> rest = open.Count == 0 ? new List<Region2D> { comp } : Poly2D.Difference(new[] { comp }, open, Tol);
+                // la clasificacion es LOCAL: lo que sobrevive a la apertura (ancho > wallMaxWidth en todas
+                // partes) es plataforma y el resto murete; MinWidth se calcula solo para el informe.
+                // Las astillas numericas de la diferencia (area menor que tolerancia x dimension) se descartan.
                 foreach (Region2D w in rest)
-                    if (w.Area > sliver && Poly2D.MinWidth(w, Tol) > 2 * Tol) walls.Add(w);
+                    if (w.Area > sliver) walls.Add(w);
             }
             int np = 0, nw = 0;
             foreach (Region2D p in platforms.OrderByDescending(p => p.Area))

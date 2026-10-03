@@ -206,10 +206,12 @@ namespace BlockRebar.Tests
             if (f1v.Count > 0) Near(f1v[0].Points[1].U, 75 + 15.875 + 7.9375, "las barras v de F1 se retranquean un diametro mas");
             Check(p.GroupsOf(Family.F1) == 2, "F1 en 2 conjuntos (" + p.GroupsOf(Family.F1) + ")");
 
-            // --- F2 ---
-            Check(p.CountOf(Family.F2) == 31 + 38, "F2 full: 31 + 38 barras (" + p.CountOf(Family.F2) + ")");
+            // --- F2 (retranqueada d1 + d2 en los bordes exteriores: sus patas bajan por dentro de las de F1) ---
+            Check(p.CountOf(Family.F2) == 30 + 38, "F2 full: 30 + 38 barras (" + p.CountOf(Family.F2) + ")");
             PlannedBar f2 = p.Bars.First(b => b.Family == Family.F2 && b.Layer == "u");
             Near(f2.Points[1].Z - f2.Points[0].Z, 220, "pata de F2 de 220 hacia abajo");
+            Near(f2.Points[1].U, 75 + 15.875 + 15.875 + 7.9375, "pata de F2 a recubrimiento + d1 + d2 + d/2 de la cara (un diametro libre con la pata de F1)");
+            Near(f2.Points[1].V, 75 + 15.875 + 15.875 + 7.9375, "primera barra u de F2 con el mismo retranqueo");
 
             // --- F3 ---
             var f3u = p.Bars.Where(b => b.Family == Family.F3 && b.Layer == "u").ToList();
@@ -226,11 +228,14 @@ namespace BlockRebar.Tests
 
             // --- F4 ---
             var f4 = p.Bars.Where(b => b.Family == Family.F4).ToList();
-            Check(f4.Count == 92, "F4: 27 + 27 + 19 + 19 = 92 barras (" + f4.Count + ")");
+            Check(f4.Count == 84, "F4 sin esquinas duplicadas y entre las barras de F2: 25 + 25 + 17 + 17 = 84 barras (" + f4.Count + ")");
             Check(p.GroupsOf(Family.F4) == 4, "F4 en 4 conjuntos, uno por cara (" + p.GroupsOf(Family.F4) + ")");
             if (f4.Count > 0)
             {
-                PlannedBar b = f4[0];
+                // una barra de una cara a lo largo de u (pie sin desfasar) y otra de una cara a lo largo de v (pie un diametro mas bajo)
+                PlannedBar b = f4.First(x => Math.Abs(x.Normal.U) > 0.5);
+                PlannedBar bv = f4.First(x => Math.Abs(x.Normal.V) > 0.5);
+                Near(b.Points[1].Z - bv.Points[1].Z, 15.875, "los pies de las caras a lo largo de v van un diametro mas bajos que los de las caras a lo largo de u");
                 Check(b.Points.Count == 3, "F4 en L (3 puntos)");
                 Near(b.Points[0].Z, 1300 - 50 - 7.9375, "F4 empieza en el tope menos recubrimiento");
                 Near(b.Points[0].Z - b.Points[1].Z, 1000, "vertical de F4 de 1000");
@@ -247,22 +252,26 @@ namespace BlockRebar.Tests
 
             // --- F5 ---
             var f5 = p.Bars.Where(b => b.Family == Family.F5).ToList();
-            Check(f5.Count == 20, "F5: 4 caras x 5 niveles = 20 (" + f5.Count + ")");
+            Check(f5.Count == 16, "F5 fromTop: 4 caras x 4 niveles = 16 (" + f5.Count + ")");
             Check(p.GroupsOf(Family.F5) == 4, "F5 en 4 conjuntos verticales (" + p.GroupsOf(Family.F5) + ")");
             if (f5.Count > 0)
             {
                 Pt v = new Pt(0.5 * (f5[0].Points[0].U + f5[0].Points[1].U), 0.5 * (f5[0].Points[0].V + f5[0].Points[1].V));
                 double distFace = Math.Min(Math.Min(Math.Abs(v.U - Mm(750)), Math.Abs(v.U - Mm(4050))), Math.Min(Math.Abs(v.V - Mm(750)), Math.Abs(v.V - Mm(3050))));
-                Near(distFace, 40 + 15.875 + 15.875 + 4.7625, "F5 por dentro de F4 y de las patas de F3", 0.6);
-                Near(f5.Min(b => b.Points[0].Z), 500 + 40 + 4.7625, "primer nivel de F5 sobre el fondo del foso");
-                Check(f5.Max(b => b.Points[0].Z) < p.LayerZ["F3:v"] - Mm(9), "ultimo nivel de F5 por debajo de F3");
+                Near(distFace, 40 + 15.875 + 15.875 + 15.875 + 4.7625, "F5 por dentro de F4 y de la pata mas interior de F3 (la de las barras v)", 0.6);
+                var f5u = f5.Where(b => Math.Abs(b.Points[0].V - b.Points[1].V) < Mm(0.5)).ToList();   // tramos a lo largo de u
+                var f5v = f5.Where(b => Math.Abs(b.Points[0].U - b.Points[1].U) < Mm(0.5)).ToList();   // tramos a lo largo de v
+                Near(f5u.Max(b => b.Points[0].Z), 1300 - 50 - 31.75 - 4.7625, "nivel superior de F5 justo bajo F3");
+                Check(f5u.Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().Count() == 4, "4 niveles de F5 a 200 exactos desde arriba (" + string.Join(", ", f5u.Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().OrderByDescending(z => z)) + ")");
+                Near(f5u.Min(b => b.Points[0].Z), 1300 - 50 - 31.75 - 4.7625 - 600, "ultimo nivel de F5 a 3 x 200 del superior (el resto queda abajo)");
+                Near(f5v.Max(b => b.Points[0].Z), 1300 - 50 - 31.75 - 4.7625 - 9.525, "los tramos a lo largo de v van un diametro mas abajo (cruce de esquina sin choque)");
                 double lmax = f5.Max(b => b.Length);
                 Near(lmax, 3300 - 2 * (40 + 4.7625), "F5 largo prolongado hasta la esquina (recubrimiento de la cara contigua)");
             }
 
             // --- F6 ---
             var f6 = p.Bars.Where(b => b.Family == Family.F6).ToList();
-            Check(f6.Count == 140, "F6: 39 + 39 + 31 + 31 = 140 verticales (" + f6.Count + ")");
+            Check(f6.Count == 136, "F6 sin esquinas duplicadas: 38 + 38 + 30 + 30 = 136 verticales (" + f6.Count + ")");
             Check(p.GroupsOf(Family.F6) == 4, "F6 en 4 conjuntos (" + p.GroupsOf(Family.F6) + ")");
             if (f6.Count > 0)
             {
@@ -271,11 +280,17 @@ namespace BlockRebar.Tests
                 Pt v = f6[0].Points[0].Plan;
                 double distExt = Math.Min(Math.Min(v.U, Mm(4800) - v.U), Math.Min(v.V, Mm(3800) - v.V));
                 Near(distExt, 40 + 4.7625, "F6 a cw + d/2 de la cara exterior");
+                // regla de esquinas: en cada esquina una sola vertical (a 44.8 de una cara y 54.3 de la otra)
+                int corner = f6.Count(b => Math.Min(b.Points[0].U, Mm(4800) - b.Points[0].U) < Mm(60) && Math.Min(b.Points[0].V, Mm(3800) - b.Points[0].V) < Mm(60));
+                Check(corner == 4, "una sola vertical de F6 por esquina (" + corner + " en las 4 esquinas)");
+                var longFace = f6.Where(b => b.Points[0].V < Mm(50)).Select(b => b.Points[0].U).OrderBy(u => u).ToList();
+                Near(longFace[0], 40 + 4.7625 + 125, "la cara larga empieza a una separacion de la barra de esquina de la cara contigua");
+                Near(longFace[longFace.Count - 1], 4800 - 40 - 1.5 * 9.525, "y termina con su propia barra de esquina");
             }
 
             // --- F7 ---
             var f7 = p.Bars.Where(b => b.Family == Family.F7).ToList();
-            Check(f7.Count == 140, "F7 alineada con F6: 140 horquillas (" + f7.Count + ")");
+            Check(f7.Count == 136, "F7 alineada con F6: 136 horquillas (" + f7.Count + ")");
             Check(p.GroupsOf(Family.F7) == 4, "F7 en 4 conjuntos (" + p.GroupsOf(Family.F7) + ")");
             if (f7.Count > 0)
             {
@@ -290,19 +305,22 @@ namespace BlockRebar.Tests
 
             // --- F8 ---
             var f8 = p.Bars.Where(b => b.Family == Family.F8).ToList();
-            Check(f8.Count == 28, "F8: 4 tramos x 7 niveles = 28 (" + f8.Count + ")");
+            Check(f8.Count == 24, "F8 fromTop: 4 tramos x 6 niveles = 24 (" + f8.Count + ")");
             Check(p.GroupsOf(Family.F8) == 4, "F8 en 4 conjuntos (" + p.GroupsOf(Family.F8) + ")");
             if (f8.Count > 0)
             {
                 Pt v = new Pt(0.5 * (f8[0].Points[0].U + f8[0].Points[1].U), 0.5 * (f8[0].Points[0].V + f8[0].Points[1].V));
                 double distExt = Math.Min(Math.Min(v.U, Mm(4800) - v.U), Math.Min(v.V, Mm(3800) - v.V));
                 Near(distExt, 40 + 9.525 + 9.525 + 4.7625, "F8 entre las patas de F7 (cw + d6 + d7 + d/2)");
-                Near(f8.Min(b => b.Points[0].Z), 75 + 2 * 15.875 + 4.7625, "primer nivel de F8 encima de F1");
+                var f8u = f8.Where(b => Math.Abs(b.Points[0].V - b.Points[1].V) < Mm(0.5)).ToList();
+                Near(f8u.Max(b => b.Points[0].Z), 1300 - 50 - 9.525 - 4.7625, "nivel superior de F8 bajo la horquilla");
+                Check(f8u.Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().Count() == 6, "6 niveles de F8 a 200 exactos desde la corona (" + string.Join(", ", f8u.Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().OrderByDescending(z => z)) + ")");
+                Near(f8u.Min(b => b.Points[0].Z), 1300 - 50 - 9.525 - 4.7625 - 1000, "ultimo nivel de F8 a 5 x 200 de la corona, por debajo del murete (el resto queda abajo)");
                 Check(f8.Min(b => b.Points[0].Z) < Mm(500), "F8 sigue por debajo del murete hasta la base");
-                Near(f8.Max(b => b.Points[0].Z), 1300 - 50 - 9.525 - 4.7625, "ultimo nivel de F8 bajo la horquilla");
                 Near(f8.Max(b => b.Length), 4800 - 2 * (40 + 4.7625), "F8 largo prolongado hasta la esquina");
             }
             Check(p.Groups.Count == 2 + 2 + 2 + 4 + 4 + 4 + 4 + 4, "26 conjuntos en total (" + p.Groups.Count + ")");
+            Clashes(p, "caso del plano");
             Check(p.Skipped == 0, "sin tramos cortos omitidos (" + p.Skipped + ")");
             Check(p.Warnings.Count == 0, "sin avisos (" + p.Warnings.Count + ")");
 
@@ -316,12 +334,12 @@ namespace BlockRebar.Tests
                 aa: new Dictionary<Family, (int circles, int lines)>
                 {
                     [Family.F1] = (38, 1), [Family.F2] = (38, 1), [Family.F3] = (27, 1), [Family.F4] = (0, 2),
-                    [Family.F5] = (10, 0), [Family.F6] = (0, 2), [Family.F7] = (0, 2), [Family.F8] = (14, 0)
+                    [Family.F5] = (8, 0), [Family.F6] = (0, 2), [Family.F7] = (0, 2), [Family.F8] = (12, 0)
                 },
                 bb: new Dictionary<Family, (int circles, int lines)>
                 {
-                    [Family.F1] = (31, 1), [Family.F2] = (31, 1), [Family.F3] = (19, 1), [Family.F4] = (0, 2),
-                    [Family.F5] = (10, 0), [Family.F6] = (0, 2), [Family.F7] = (0, 2), [Family.F8] = (14, 0)
+                    [Family.F1] = (31, 1), [Family.F2] = (30, 1), [Family.F3] = (19, 1), [Family.F4] = (0, 2),
+                    [Family.F5] = (8, 0), [Family.F6] = (0, 2), [Family.F7] = (0, 2), [Family.F8] = (12, 0)
                 });
             SectionCut aa0 = BlockSection.Cut(p, t, new SectionLine(true, Mm(1900)), Mm(2), Mm(260606));
             Check(aa0.Profile.Count == 5, "perfil A-A con 5 tramos (" + aa0.Profile.Count + "): " + aa0.ProfileText());
@@ -334,7 +352,10 @@ namespace BlockRebar.Tests
             Check(aa0.Levels.Count == 3, "3 niveles: tope, fondo de foso, cara inferior (" + aa0.Levels.Count + ")");
             Near(aa0.Levels[0].Elevation, 260606 + 1300, "nivel del tope con la elevacion de la base (261.906)");
             SectionPolyline l4 = aa0.Polylines.FirstOrDefault(x => x.Family == Family.F4);
-            Check(l4 != null && l4.Points.Count == 3 && Math.Abs(ToMm(l4.Points[1].V) - 242.1) < 0.6, "F4 en A-A como L con el pie a z=242");
+            Check(l4 != null && l4.Points.Count == 3 && Math.Abs(ToMm(l4.Points[1].V) - (242.1 - 15.875)) < 0.6, "F4 en A-A (caras a lo largo de v) como L con el pie a z=226");
+            SectionCut bb0 = BlockSection.Cut(p, t, new SectionLine(false, Mm(2400)), Mm(2));
+            SectionPolyline l4b = bb0.Polylines.FirstOrDefault(x => x.Family == Family.F4);
+            Check(l4b != null && l4b.Points.Count == 3 && Math.Abs(ToMm(l4b.Points[1].V) - 242.1) < 0.6, "F4 en B-B (caras a lo largo de u) como L con el pie a z=242");
             SectionPolyline l7 = aa0.Polylines.FirstOrDefault(x => x.Family == Family.F7);
             Check(l7 != null && l7.Points.Count == 4, "F7 en A-A como U invertida");
             Check(aa0.Labels.Select(l => (l.Family, l.Side)).Distinct().Count() == aa0.Labels.Count, "una etiqueta por familia y lado (" + aa0.Labels.Count + ")");
@@ -368,6 +389,16 @@ namespace BlockRebar.Tests
 
         private static string Indent(string s) => "  " + s.Replace(Environment.NewLine, Environment.NewLine + "  ");
 
+        /// <summary>Informe de choques del plan (tramo contra tramo, 3D, tolerancia 1 mm) y comprobacion de que no hay ninguno.</summary>
+        private static ClashReport Clashes(BlockPlan p, string name)
+        {
+            ClashReport r = ClashCheck.Check(p, Mm(1));
+            Console.WriteLine("  Informe de choques (" + name + "): " + r.Describe().Replace(Environment.NewLine, Environment.NewLine + "  "));
+            Check(r.Clashes.Count == 0, "sin choques en " + name + " (" + r.Clashes.Count + ")");
+            Check(r.UnexpectedContacts.Count == 0, "sin contactos no previstos en " + name + " (" + r.UnexpectedContacts.Count + ")");
+            return r;
+        }
+
         // =================================================================
         // Caso (a): canaleta solo en un lado
         // =================================================================
@@ -399,24 +430,29 @@ namespace BlockRebar.Tests
             Console.WriteLine(Indent(p.QuantityTable()));
             Check(p.Error == null, "plan sin error: " + p.Error);
             if (p.Error != null) return;
-            Check(p.CountOf(Family.F4) == 39 && p.GroupsOf(Family.F4) == 1, "F4 solo en la cara de foso de la plataforma: 39 barras, 1 conjunto (" + p.CountOf(Family.F4) + " / " + p.GroupsOf(Family.F4) + ")");
-            Check(p.CountOf(Family.F5) == 3 && p.GroupsOf(Family.F5) == 1, "F5: 3 niveles en una cara (" + p.CountOf(Family.F5) + ")");
-            PlannedBar f5 = p.Bars.First(b => b.Family == Family.F5);
-            Near(f5.Points[0].Z, 800 + 40 + 4.7625, "F5 arranca sobre el fondo de la canaleta (800)");
-            Near(f5.Length, 4800 - 2 * (75 + 4.7625), "F5 llega al recubrimiento de borde (75) de las caras exteriores");
-            Check(p.CountOf(Family.F6) == 39 + 2 + 2, "F6: 39 en el tramo largo + 2 en cada testero (" + p.CountOf(Family.F6) + ")");
-            Check(p.CountOf(Family.F7) == 39, "F7 solo en el tramo largo (en los testeros la cara opuesta no es de foso): 39 (" + p.CountOf(Family.F7) + ")");
-            Check(p.HairpinsSkipped == 4, "4 horquillas omitidas en los testeros (" + p.HairpinsSkipped + ")");
-            Check(p.CountOf(Family.F8) == 7 && p.GroupsOf(Family.F8) == 1, "F8: 7 niveles en el tramo largo; los testeros son mas cortos que la barra minima (" + p.CountOf(Family.F8) + ")");
+            Check(p.CountOf(Family.F4) == 37 && p.GroupsOf(Family.F4) == 1, "F4 solo en la cara de foso de la plataforma, fuera de la zona de patas de F1/F2 y entre las barras de F2: 37 barras, 1 conjunto (" + p.CountOf(Family.F4) + " / " + p.GroupsOf(Family.F4) + ")");
+            var f4a = p.Bars.Where(b => b.Family == Family.F4).ToList();
+            Check(f4a.Min(b => b.Points[0].U) > Mm(75 + 15.875 + 31.75 + 31.75 + 7.9), "el primer vertical de F4 queda por dentro de las patas de F1 y F2 (u=" + ToMm(f4a.Min(b => b.Points[0].U)) + ")");
+            Check(p.CountOf(Family.F5) == 2 && p.GroupsOf(Family.F5) == 1, "F5 fromTop: 2 niveles en una cara (1213.5 y 1013.5; 813.5 queda bajo el fondo de la canaleta + recubrimiento) (" + p.CountOf(Family.F5) + ")");
+            PlannedBar f5 = p.Bars.Where(b => b.Family == Family.F5).OrderBy(b => b.Points[0].Z).First();
+            Near(f5.Points[0].Z, 1300 - 50 - 31.75 - 4.7625 - 200, "nivel inferior de F5 a 200 del superior");
+            Near(f5.Length, 4800 - 2 * (75 + 15.875 + 15.875 + 4.7625 + 2), "F5 para antes de la zona de patas de F3 junto a las caras exteriores");
+            Check(p.CountOf(Family.F6) == 38 + 2 + 1, "F6 con la regla de esquinas: 38 en el tramo largo + 2 en el testero que llega a la esquina + 1 en el que sale de ella (" + p.CountOf(Family.F6) + ")");
+            var f6a = p.Bars.Where(b => b.Family == Family.F6).ToList();
+            Check(f6a.Count(b => b.Points[0].U < Mm(60) && b.Points[0].V < Mm(60)) == 1 && f6a.Count(b => b.Points[0].U > Mm(4740) && b.Points[0].V < Mm(60)) == 1, "una sola vertical en cada esquina del murete recto");
+            Check(p.CountOf(Family.F7) == 38, "F7 solo en el tramo largo (en los testeros la cara opuesta no es de foso): 38 (" + p.CountOf(Family.F7) + ")");
+            Check(p.HairpinsSkipped == 3, "3 horquillas omitidas en los testeros (" + p.HairpinsSkipped + ")");
+            Check(p.CountOf(Family.F8) == 6 && p.GroupsOf(Family.F8) == 1, "F8 fromTop: 6 niveles en el tramo largo; los testeros son mas cortos que la barra minima (" + p.CountOf(Family.F8) + ")");
             Check(p.Skipped > 0, "tramos cortos omitidos en los testeros (" + p.Skipped + ")");
             PlannedBar f2 = p.Bars.First(b => b.Family == Family.F2 && b.Layer == "u");
             Near(f2.Points[1].Z, 800 - 75 - 7.9375, "F2 a 75 bajo el fondo de la canaleta");
             // las patas de F1 en los extremos abiertos de la canaleta quedan bajo su fondo
             var f1Open = p.Bars.Where(b => b.Family == Family.F1 && b.Layer == "u" && b.Points[1].V > Mm(150) && b.Points[1].V < Mm(750)).ToList();
             Check(f1Open.Count > 0 && f1Open.All(b => b.Points.Count == 4 && b.Points[0].Z + Mm(8) < Mm(800)), "patas de F1 bajo la canaleta abierta (" + f1Open.Count + " barras)");
+            Clashes(p, "canaleta en un lado");
             Sections(p, t, "canaleta",
                 aa: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 0), [Family.F5] = (0, 0), [Family.F6] = (0, 0), [Family.F7] = (0, 0), [Family.F8] = (0, 0) },
-                bb: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 1), [Family.F5] = (3, 0), [Family.F6] = (0, 1), [Family.F7] = (0, 1), [Family.F8] = (7, 0) });
+                bb: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 1), [Family.F5] = (2, 0), [Family.F6] = (0, 1), [Family.F7] = (0, 1), [Family.F8] = (6, 0) });
             SectionCut bb = BlockSection.Cut(p, t, new SectionLine(false, Mm(2400)), Mm(2));
             Check(bb.Profile.Count == 3 && bb.Profile[0].Kind == "murete" && bb.Profile[1].Kind == "foso" && bb.Profile[2].Kind == "nucleo", "B-B: murete / canaleta / nucleo: " + bb.ProfileText());
             Near(bb.RecessDepth, 500, "profundidad de la canaleta en B-B");
@@ -453,30 +489,32 @@ namespace BlockRebar.Tests
             Check(p.CountOf(Family.F6) == 0 && p.CountOf(Family.F7) == 0 && p.CountOf(Family.F8) == 0, "sin F6 / F7 / F8 (no hay murete)");
             Check(p.GroupsOf(Family.F4) == 4 && p.GroupsOf(Family.F5) == 4, "F4 y F5 en las 4 caras del foso");
             // F4: posiciones desde d/2 de la esquina entrante: 1500 - 15.875 -> 12 huecos -> 13; 1000 - 15.875 -> 8 -> 9
-            Check(p.CountOf(Family.F4) == 2 * 13 + 2 * 9, "F4: 13 + 13 + 9 + 9 barras (" + p.CountOf(Family.F4) + ")");
+            Check(p.CountOf(Family.F4) == 2 * 12 + 2 * 9, "F4 entre las barras de F2: 12 + 12 + 9 + 9 barras (" + p.CountOf(Family.F4) + ")");
             PlannedBar f4 = p.Bars.First(b => b.Family == Family.F4);
             Check(t.RecessAt(f4.Points[2].Plan) != null, "el pie de F4 queda bajo el foso central");
             // F5 por tramos prolongados mas alla de la esquina entrante: cruce con la barra contigua + traslape 400
-            double o5 = 40 + 15.875 + 15.875 + 4.7625;
+            double o5 = 40 + 15.875 + 15.875 + 15.875 + 4.7625;
             PlannedBar f5long = p.Bars.Where(b => b.Family == Family.F5).OrderByDescending(b => b.Length).First();
             Near(f5long.Length, 1500 + 2 * (o5 + 400), "F5 largo: cara 1500 + 2 x (cruce + traslape 400)", 0.6);
             // F3 rodea el foso: hay barras u partidas en dos tramos a la altura del foso
             var f3uMid = p.Bars.Where(b => b.Family == Family.F3 && b.Layer == "u" && b.Points[1].V > Mm(1000) && b.Points[1].V < Mm(2000)).ToList();
             Check(f3uMid.Count > 0 && f3uMid.Count % 2 == 0 && f3uMid.All(b => b.Points.Count == 4), "F3 u partida en dos a la altura del foso, con patas en el foso y en el exterior (" + f3uMid.Count + ")");
             Check(f3uMid.Any(b => Math.Abs(ToMm(b.Points[2].U) - (1250 - 40 - 15.875 - 7.9375)) < 0.6), "F3 u termina con pata por dentro de F4 en la cara del foso");
+            Clashes(p, "foso central");
             Check(f3uMid.All(b => b.Points.Count == 4), "todas las F3 u junto al foso llevan pata en los dos extremos, tambien las que acaban junto a su esquina");
             // conjuntos de F3 u: enteras bajo el foso, dos mitades a su altura, enteras encima
             Check(p.Groups.Count(g => g.Family == Family.F3 && g.Layer == "u") == 4, "F3 u en 4 conjuntos (" + p.Groups.Count(g => g.Family == Family.F3 && g.Layer == "u") + ")");
             Check(p.Groups.Count(g => g.Family == Family.F3 && g.Layer == "v") == 4, "F3 v en 4 conjuntos (" + p.Groups.Count(g => g.Family == Family.F3 && g.Layer == "v") + ")");
             Sections(p, t, "foso central",
-                aa: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 2), [Family.F5] = (8, 0), [Family.F6] = (0, 0) },
-                bb: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 2), [Family.F5] = (8, 0) });
+                aa: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 2), [Family.F5] = (6, 0), [Family.F6] = (0, 0) },
+                bb: new Dictionary<Family, (int, int)> { [Family.F4] = (0, 2), [Family.F5] = (6, 0) });
             SectionCut aa = BlockSection.Cut(p, t, new SectionLine(true, Mm(1500)), Mm(2));
             Check(aa.Profile.Count == 3 && aa.Profile[0].Kind == "nucleo" && aa.Profile[1].Kind == "foso" && Math.Abs(ToMm(aa.Profile[1].Length) - 1500) < 1, "A-A: nucleo / foso 1500 / nucleo: " + aa.ProfileText());
             // anillo cerrado de F5
             c.F5.Shape = "ring";
             BlockPlan pr = BlockPlan.Build(t, c, Diam(c));
-            Check(pr.Error == null && pr.CountOf(Family.F5) == 4 && pr.GroupsOf(Family.F5) == 1, "F5 en anillo: 4 niveles, 1 conjunto (" + pr.CountOf(Family.F5) + " / " + pr.GroupsOf(Family.F5) + ") " + pr.Error);
+            Check(pr.Error == null && pr.CountOf(Family.F5) == 3 && pr.GroupsOf(Family.F5) == 1, "F5 en anillo fromTop: 3 niveles (1113.5, 913.5, 713.5), 1 conjunto (" + pr.CountOf(Family.F5) + " / " + pr.GroupsOf(Family.F5) + ") " + pr.Error);
+            if (pr.Error == null) Clashes(pr, "foso central con F5 en anillo");
             if (pr.CountOf(Family.F5) > 0)
             {
                 PlannedBar ring = pr.Bars.First(b => b.Family == Family.F5);
@@ -521,10 +559,14 @@ namespace BlockRebar.Tests
             {
                 Near(p5.LayerZ["F2:u"], 500 - 75 - 7.9375, "F2 bajo el foso mas profundo (500)");
                 var f5 = p5.Bars.Where(b => b.Family == Family.F5).ToList();
-                Check(f5.Any(b => Math.Abs(ToMm(b.Points[0].Z) - (500 + 40 + 4.7625)) < 0.6) && f5.Any(b => Math.Abs(ToMm(b.Points[0].Z) - (700 + 40 + 4.7625)) < 0.6), "F5 arranca desde el fondo de cada foso (500 y 700)");
+                var lv1 = f5.Where(b => b.Points[0].U < Mm(2400) && b.Points[1].U < Mm(2400) && Math.Abs(b.Normal.Z) > 0.5 && Math.Abs(b.Points[0].V - b.Points[1].V) > Mm(1)).Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().Count();
+                var lv2 = f5.Where(b => b.Points[0].U > Mm(2400) && b.Points[1].U > Mm(2400) && Math.Abs(b.Points[0].V - b.Points[1].V) > Mm(1)).Select(b => Math.Round(b.Points[0].Z * Ft)).Distinct().Count();
+                Check(lv1 == 4 && lv2 == 3, "F5 fromTop llega mas abajo en el foso profundo: 4 niveles en las caras del foso de 500 y 3 en las del de 700 (" + lv1 + " / " + lv2 + ")");
+                Check(f5.Any(b => b.Face.Contains(" + ")), "los tramos colineales de los dos fosos sobre la misma cara se funden en una barra");
                 Check(p5.CountOf(Family.F6) == 0 && p5.Walls() == 0, "sin murete: todo plataforma (" + t5.Walls + " muretes)");
                 SectionCut aa = BlockSection.Cut(p5, t5, new SectionLine(true, Mm(1900)), tol);
                 Check(aa.Levels.Count == 4 && aa.Levels.Any(l => l.Name.Contains("foso 1")) && aa.Levels.Any(l => l.Name.Contains("foso 2")), "niveles de los dos fondos en A-A (" + string.Join(", ", aa.Levels.Select(l => l.Name + " " + ToMm(l.Z))) + ")");
+                Clashes(p5, "dos fosos");
             }
 
             // pie de F4 que choca con F2: se recoloca a media altura con aviso
@@ -538,6 +580,7 @@ namespace BlockRebar.Tests
                 PlannedBar f4 = pc.Bars.First(b => b.Family == Family.F4);
                 Near(f4.Points[1].Z, 0.5 * ((75 + 2 * 15.875) + (500 - 75 - 2 * 15.875)), "pie recolocado a media altura entre F1 y F2", 1);
                 Check(pc.Warnings.Any(w => w.Contains("F4") && w.Contains("media altura")), "aviso de recolocacion: " + string.Join(" | ", pc.Warnings));
+                Clashes(pc, "pie de F4 recolocado");
             }
             // vertical corto: el pie quedaria dentro del foso, se alarga con aviso
             c = Cfg(); c.F4.VerticalMm = 500;
@@ -559,6 +602,7 @@ namespace BlockRebar.Tests
             c = Cfg(); c.F6.Enabled = false; c.F8.Enabled = false;
             pn = BlockPlan.Build(tn3, c, Diam(c));
             Check(pn.Error == null, "murete de 140 solo con horquillas: entra (" + pn.Error + ")");
+            if (pn.Error == null) Clashes(pn, "murete de 140 solo con horquillas");
 
             // region mixta: plataforma + murete en U unidos en una sola cara del tope
             // una sola cara del tope: plataforma arriba y murete en U abajo, unidos por los testeros (caras sin solape)
@@ -583,6 +627,7 @@ namespace BlockRebar.Tests
                 var f3 = pm.Bars.Where(b => b.Family == Family.F3 && b.Layer == "v").ToList();
                 // las barras v de F3 que llegan al limite interno con el murete van rectas (sin pata) por ese extremo
                 Check(f3.Any(b => b.Points.Count == 3), "F3 v recta en el limite interno con el murete y con pata en el exterior");
+                Clashes(pm, "region mixta");
             }
         }
 
@@ -601,11 +646,15 @@ namespace BlockRebar.Tests
             Check(c.F3.LegDownMm == 340 && c.F4.VerticalMm == 1000 && c.F4.FootMm == 370, "F3 patas 340; F4 1000 / 370");
             Check(c.F5.BarTypeName == "3/8\"" && c.F5.SpacingMm == 200 && c.F5.Shape == "segments" && c.F5.LapMm == 400, "F5 3/8\"@200 por tramos, traslape 400");
             Check(c.F6.SpacingMm == 125 && c.F7.LegMm == 350 && c.F7.Placement == "aligned" && c.F8.Layers == 1 && c.F8.SpacingMm == 200, "F6 @125, F7 patas 350 alineada, F8 una capa @200");
+            Check(c.F5.LayoutMode == "fromTop" && c.F8.LayoutMode == "fromTop" && c.F1.U.LayoutMode == "maxSpacing" && c.F4.LayoutMode == "maxSpacing" && c.F6.LayoutMode == "maxSpacing", "layoutMode: fromTop en F5 y F8, maxSpacing en el resto");
+            c.F5.LayoutMode = "EXACT"; c.F1.V.LayoutMode = "raro"; c.F8.LayoutMode = "";
+            c.Normalize();
+            Check(c.F5.LayoutMode == "fromTop" && c.F1.V.LayoutMode == "maxSpacing" && c.F8.LayoutMode == "fromTop", "layoutMode normalizado (vacio = el de la familia)");
             Check(c.LevelReference == "shared" && c.PartitionTemplate == "BLQ-{marca}-{familia}", "niveles en coordenadas compartidas, particion BLQ-{marca}-{familia}");
             Check(c.BarTypesNeeded().Count == 11, "11 tipos de barra necesarios con todo activo (" + c.BarTypesNeeded().Count + ")");
             // claves exactas en el json
             string json = c.ToJson();
-            Check(json.Contains("\"F1_bottomMesh\"") && json.Contains("\"F8_wallHoriz\"") && json.Contains("\"coverWallMm\"") && json.Contains("\"layers\": 1") && json.Contains("\"levelReference\": \"shared\""), "json con las claves exactas (F1_bottomMesh, F8_wallHoriz, layers, levelReference)");
+            Check(json.Contains("\"F1_bottomMesh\"") && json.Contains("\"F8_wallHoriz\"") && json.Contains("\"coverWallMm\"") && json.Contains("\"layers\": 1") && json.Contains("\"levelReference\": \"shared\"") && json.Contains("\"layoutMode\": \"fromTop\""), "json con las claves exactas (F1_bottomMesh, F8_wallHoriz, layers, levelReference, layoutMode)");
             // ida y vuelta por el config.json del repositorio
             string repoCfg = System.IO.Path.Combine("..", "config.json");
             if (!System.IO.File.Exists(repoCfg)) repoCfg = "config.json";
@@ -613,8 +662,8 @@ namespace BlockRebar.Tests
             if (System.IO.File.Exists(repoCfg))
             {
                 AppConfig fromFile = AppConfig.Load(repoCfg);
-                Check(fromFile.F4.FootMm == 370 && fromFile.F7.BarTypeName == "3/8\"" && fromFile.F8.Layers == 1 && fromFile.LevelReference == "shared" && fromFile.SectionViews.Scale == 20,
-                      "config.json del repositorio se lee con los valores del plano");
+                Check(fromFile.F4.FootMm == 370 && fromFile.F7.BarTypeName == "3/8\"" && fromFile.F8.Layers == 1 && fromFile.LevelReference == "shared" && fromFile.SectionViews.Scale == 20 && fromFile.F5.LayoutMode == "fromTop" && fromFile.F8.LayoutMode == "fromTop",
+                      "config.json del repositorio se lee con los valores del plano (F5 y F8 fromTop)");
             }
             string tmp = System.IO.Path.GetTempFileName();
             c.F7.Placement = "STAGGERED"; c.F8.Layers = 5; c.F2.Extent = "Recess"; c.LevelReference = "base";

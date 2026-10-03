@@ -55,12 +55,14 @@ namespace BlockRebar
     {
         /// <summary>Tipo de barra (RebarBarType): exacto, o un fragmento que lo identifique ("5/8").</summary>
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "";
-        /// <summary>Separacion maxima (mm); n = techo(L / s) huecos iguales.</summary>
+        /// <summary>Separacion (mm): maxima con n = techo(L / s) huecos iguales ("maxSpacing") o exacta desde el primer extremo ("fromTop").</summary>
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 125;
+        /// <summary>"maxSpacing" (reparto con barra en los dos extremos) o "fromTop" (separacion exacta desde el extremo inicial, sin forzar la ultima barra).</summary>
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "maxSpacing";
 
         public LayerCfg() { }
         public LayerCfg(string type, double spacing) { BarTypeName = type; SpacingMm = spacing; }
-        public LayerCfg Copy() => new LayerCfg(BarTypeName, SpacingMm);
+        public LayerCfg Copy() => new LayerCfg(BarTypeName, SpacingMm) { LayoutMode = LayoutMode };
     }
 
     /// <summary>F1: malla inferior en dos direcciones con patas hacia arriba en los bordes exteriores.</summary>
@@ -103,6 +105,7 @@ namespace BlockRebar
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "5/8\"";
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 125;
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "maxSpacing";
         /// <summary>Longitud del tramo vertical desde el tope (recubrimiento) hacia abajo (mm).</summary>
         [JsonPropertyName("verticalMm")] public double VerticalMm { get; set; } = 1000;
         /// <summary>Longitud del pie horizontal que apunta bajo el foso (mm).</summary>
@@ -114,8 +117,10 @@ namespace BlockRebar
     {
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "3/8\"";
-        /// <summary>Separacion vertical maxima (mm).</summary>
+        /// <summary>Separacion vertical (mm).</summary>
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 200;
+        /// <summary>"fromTop" (por defecto: separacion exacta desde el nivel superior, el resto queda abajo, como en el plano) o "maxSpacing".</summary>
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "fromTop";
         /// <summary>"segments" = tramos rectos por cara prolongados hasta la esquina; "ring" = anillo cerrado por traslape.</summary>
         [JsonPropertyName("shape")] public string Shape { get; set; } = "segments";
         /// <summary>Prolongacion mas alla del cruce con la barra de la cara contigua, o traslape del anillo (mm).</summary>
@@ -128,6 +133,7 @@ namespace BlockRebar
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "3/8\"";
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 125;
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "maxSpacing";
     }
 
     /// <summary>F7: horquilla en U invertida sobre la corona del murete.</summary>
@@ -136,6 +142,7 @@ namespace BlockRebar
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "3/8\"";
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 125;
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "maxSpacing";
         /// <summary>Patas hacia abajo (mm, exterior).</summary>
         [JsonPropertyName("legMm")] public double LegMm { get; set; } = 350;
         /// <summary>"aligned" = en las mismas posiciones que F6 (traslape por contacto); "staggered" = desplazada media separacion.</summary>
@@ -148,6 +155,8 @@ namespace BlockRebar
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = true;
         [JsonPropertyName("barTypeName")] public string BarTypeName { get; set; } = "3/8\"";
         [JsonPropertyName("spacingMm")] public double SpacingMm { get; set; } = 200;
+        /// <summary>"fromTop" (por defecto: separacion exacta desde la corona, el resto queda abajo) o "maxSpacing".</summary>
+        [JsonPropertyName("layoutMode")] public string LayoutMode { get; set; } = "fromTop";
         /// <summary>1 = una sola capa entre las patas de F7 (sigue por la cara exterior hasta zBase); 2 = ademas una capa en la cara del foso.</summary>
         [JsonPropertyName("layers")] public int Layers { get; set; } = 1;
         [JsonPropertyName("shape")] public string Shape { get; set; } = "segments";
@@ -294,7 +303,13 @@ namespace BlockRebar
             {
                 if (l.BarTypeName == null) l.BarTypeName = "";
                 if (l.SpacingMm <= 0) l.SpacingMm = 125;
+                l.LayoutMode = NormalizeLayout(l.LayoutMode, "maxSpacing");
             }
+            F4.LayoutMode = NormalizeLayout(F4.LayoutMode, "maxSpacing");
+            F5.LayoutMode = NormalizeLayout(F5.LayoutMode, "fromTop");
+            F6.LayoutMode = NormalizeLayout(F6.LayoutMode, "maxSpacing");
+            F7.LayoutMode = NormalizeLayout(F7.LayoutMode, "maxSpacing");
+            F8.LayoutMode = NormalizeLayout(F8.LayoutMode, "fromTop");
             if (F4.BarTypeName == null) F4.BarTypeName = ""; if (F4.SpacingMm <= 0) F4.SpacingMm = 125;
             if (F5.BarTypeName == null) F5.BarTypeName = ""; if (F5.SpacingMm <= 0) F5.SpacingMm = 200;
             if (F6.BarTypeName == null) F6.BarTypeName = ""; if (F6.SpacingMm <= 0) F6.SpacingMm = 125;
@@ -342,6 +357,17 @@ namespace BlockRebar
                 case "y": return "y";
                 case "angle": case "angulo": return "angle";
                 default: return "long";
+            }
+        }
+
+        /// <summary>"maxSpacing" o "fromTop"; vacio o desconocido = el valor por defecto de la familia.</summary>
+        public static string NormalizeLayout(string m, string def)
+        {
+            switch ((m ?? "").Trim().ToLowerInvariant())
+            {
+                case "maxspacing": case "max": return "maxSpacing";
+                case "fromtop": case "exact": case "top": return "fromTop";
+                default: return def;
             }
         }
 

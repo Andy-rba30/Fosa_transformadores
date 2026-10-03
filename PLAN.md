@@ -38,7 +38,7 @@ add-in añada su botón al desplegable común.
 | Fase | Contenido | Estado |
 |------|-----------|--------|
 | 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | hecho, OK recibido |
-| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **hecho** (247 comprobaciones OK; el proyecto principal compila en Linux) |
+| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `ClashCheck`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **hecho** (278 comprobaciones OK, 0 choques; el proyecto principal compila en Linux) |
 | 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | **siguiente** |
 | 2b (opcional) | Botón **Crear vistas de sección en Revit** tras Armar (`SectionViews.cs`): dos `ViewSection` A y B, acero sin ocultar, etiquetas opcionales. No bloquea la fase 1 | pendiente |
 | 3 | Pruebas del usuario en Revit 2027.2 y correcciones | pendiente |
@@ -57,6 +57,7 @@ add-in añada su botón al desplegable común.
 | `Poly2D.cs` | Booleanas y offsets 2D sobre **Clipper2** (NuGet `Clipper2`): unión, diferencia, intersección, offset, apertura morfológica, componentes conexas, **inset por arista con recubrimiento distinto por tipo de borde** | nuevo (puro) |
 | `BlockTopology.cs` | Clasificación pura del bloque en 2D: a partir de los anillos del contorno inferior, de las regiones del tope y de los fondos de foso (anillos + cota) obtiene fosos, plataformas, muretes, y para cada arista de cada región su **tipo** (exterior / cara de foso / límite interno) y a qué región pertenece cada cara de foso | nuevo (puro) |
 | `BlockPlan.cs` | Armado puro F1…F8 en coordenadas locales: cada barra es una **polilínea** (tramo recto + patas como tramos), agrupación en conjuntos iguales equiespaciados, avisos, conteo y longitudes por familia, peso por diámetro | nuevo (puro) |
+| `ClashCheck.cs` | Comprobación pura de choques: cada par de barras de conjuntos distintos, tramo contra tramo en 3D (distancia entre ejes contra suma de radios menos 1 mm), con lista de contactos previstos e informe por par de familias con coordenadas | nuevo (puro) |
 | `BlockSection.cs` | Sección pura: `BlockSection.Cut(plan, topología, líneaDeCorte)` devuelve el perfil del hormigón en ese corte, los círculos (barra, familia, posición, diámetro), las polilíneas contenidas en el plano, las cotas (ancho total, tramos murete / foso / núcleo, profundidad de foso, espesor de base), los niveles y los anclajes de las etiquetas por familia y lado | nuevo (puro) |
 | `BlockOutline.cs` | Lectura del sólido de Revit: zBase, zTope, fondos de foso, anillos, caras verticales, motivos de rechazo; `BlockFrame` (sistema local u/v por dirección, perfiles reales de las dos secciones muestreados con `Solid.IntersectWithCurve`) | nuevo, patrón de `FootingOutline` |
 | `HostAnalysis.cs` | Resultado por elemento (topología o motivo de rechazo) + dirección propia | adaptado |
@@ -472,6 +473,42 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
   en un límite interno plataforma / murete la barra se queda justo en el límite.
 - **Etiquetas** con la separación nominal de la familia ("@125"), no con el paso real del
   conjunto (que es menor o igual, `n = techo(L/s)`).
+- **Comprobación de choques** (`ClashCheck`, pura, en todos los casos de prueba): cada par de
+  barras de conjuntos distintos, tramo contra tramo en 3D; choque = distancia entre ejes menor
+  que la suma de radios menos 1 mm (inadmisible: los tests exigen 0). Los contactos (distancia
+  igual a la suma de radios) solo se admiten donde están previstos: las dos capas de una malla,
+  F6 con la pata exterior de F7, F8 con esa pata y con la vertical de esquina de F6 de la cara
+  contigua (mismo plano), las patas de F3 contra F4 y F5, F5 bajo F3, y los cruces de esquina
+  de F5 / F8 / pies de F4 desfasados un diámetro. Cualquier otro contacto se lista como "no
+  previsto" (los tests exigen 0).
+- **Regla de esquinas** (F4, F6, F7): la barra de esquina pertenece a una sola cara, la que
+  llega a la esquina (a recubrimiento + 1.5 d del vértice); la cara que sale de la esquina
+  empieza su reparto a una separación de esa barra o, si es demasiado corta, termina antes
+  con una sola barra en su otro extremo. También en los testeros de un murete recto.
+- **Patas de F1 y F2**: F2 se retranquea `d1 + d2` más en los bordes exteriores, así su pata
+  baja por dentro de la de F1 con un diámetro libre.
+- **Zona de patas exteriores**: hasta donde llegan las patas de F1 / F2 / F3 junto a las caras
+  exteriores (según el rango de cotas). El primer vertical de F4 junto a una esquina exterior,
+  el pie de F4 hacia una cara exterior y las prolongaciones de F5 hacia ella paran antes.
+- **F4 entre las barras de F2**: los verticales de F4 atraviesan la malla F2; sus posiciones
+  se ajustan a la retícula de las barras de F2 que cruzan su plano (paso igual al de F2, o un
+  submúltiplo bajo la separación máxima, fase centrada en la banda libre). Y las barras de F2
+  paralelas a una cara de foso esquivan el plano de sus verticales repartiéndose con más
+  barras si hace falta (aviso).
+- **Cruces de esquina a la misma cota**: los tramos de F5 y F8 de las caras a lo largo de v
+  van un diámetro más bajos que los de las caras a lo largo de u; lo mismo los pies de F4
+  (que convergen en las esquinas entrantes de un foso). El cruce queda en contacto previsto.
+- **F5 por dentro de la pata más interior de F3** (la de las barras v, retranqueadas un
+  diámetro más): plano único `cw + d4 + d3u + d3v + d5/2` en todas las caras y toda la altura.
+- **Tramos colineales** de F5 / F8 de dos fosos alineados sobre la misma cara que se solapan
+  se funden en una sola barra.
+- **`layoutMode`** por familia: `maxSpacing` (reparto con barra en los dos extremos,
+  `n = techo(L/s)`) o `fromTop` (separación exacta desde el nivel superior, el resto queda
+  abajo, como el plano: 4 F5 por cara de núcleo y 6 F8 en el murete). Por defecto `fromTop`
+  en F5 y F8 y `maxSpacing` en el resto.
+- **Clasificación murete / plataforma**: es LOCAL (apertura morfológica de radio
+  `wallMaxWidthMm / 2`); el "ancho mínimo por diámetro inscrito" es solo informativo (y las
+  astillas numéricas se descartan por área).
 - **`Clipper2`**: la unión de anillos sueltos usa la regla par-impar (las caras de Revit no se
   solapan); la de regiones se hace por pares (subject / clip) para que los solapes no se
   anulen. Precisión de 6 decimales en pies. Las versiones 1.5.x no tienen `Union(subject,
@@ -504,7 +541,8 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] Clonado y análisis de Acero-Zapatas (arquitectura, convenciones, tests).
 - [x] PLAN.md.
 - [x] OK del usuario al plan (decisiones de arriba).
-- [x] Fase 1: clases puras (incluida `BlockSection`) + Tests: `cd Tests && dotnet run` → 247 comprobaciones correctas, 0 fallos. `dotnet build BlockRebar.csproj -c Release` compila (0 errores) y deja `Clipper2Lib.dll` junto a `BlockRebar.dll`.
+- [x] Fase 1: clases puras (incluida `BlockSection`) + Tests: `cd Tests && dotnet run` → 278 comprobaciones correctas, 0 fallos, 0 choques y 0 contactos no previstos en todos los casos. `dotnet build BlockRebar.csproj -c Release` compila (0 errores) y deja `Clipper2Lib.dll` junto a `BlockRebar.dll`.
+- [x] Revisión de choques (`ClashCheck`), regla de esquinas, retranqueo de F2, F5 por dentro de la pata más interior, cruces desfasados, `layoutMode` fromTop.
 - [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
 - [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
