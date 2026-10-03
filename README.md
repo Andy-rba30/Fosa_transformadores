@@ -111,7 +111,12 @@ rechazos; también queda en `%Temp%\BlockRebar.log`.
   (Foundation Slab 3600 × 3300 × 1300 con foso perimetral: 0 choques, niveles en compartidas).
 - **Entrega 2b** (esta): `RebarGenerator` con las dos redes de seguridad, subtransacción por
   elemento, arrays, Partición, borrado del armado del plugin, comparación con Revit e informe.
-- **Entrega 2c** (opcional): vistas de sección A y B en Revit.
+- **Entrega 2c** (esta): vistas de sección A-A y B-B en Revit en las líneas de corte de la
+  lámina (escala 1:20, detalle fino, recorte con margen, nombre `{marca} - Sección {letra}`,
+  acero sin ocultar, una etiqueta por conjunto y familia si la familia de etiqueta está
+  cargada), al armar o con el botón "Crear solo las vistas de sección".
+- **Fase 3** (siguiente): rejillas de foso (ángulos de borde, rejillas Generic Model, pernos
+  contados), ver `PLAN.md` sección 7.
 
 ## config.json
 
@@ -165,6 +170,7 @@ y (3) una captura de la lámina, de las barras en Revit o del error.
 | `HostAnalysis.cs` | Resultado por elemento, dirección propia e informe del modo diagnóstico. |
 | `BarTypes.cs`, `NameMatch.cs` | Tipos de barra del proyecto, diámetros reales y regla de nombres (exacto, fragmento único, ambiguo). |
 | `RebarGenerator.cs` | Crea los `Rebar` con las dos redes de seguridad, marca del plugin, borrado y comparación con lo previsto. |
+| `SectionViews.cs` | Vistas de sección A-A y B-B en Revit, acero sin ocultar y etiquetas por conjunto. |
 | `RebarOptionsWindow.cs`, `PlanPreview.cs`, `SectionPreview.cs`, `PreviewState.cs` | La lámina (WPF en código, sin XAML). |
 | `RevitTheme.cs`, `RibbonApp.cs`, `ArmarBloqueCommand.cs`, `Log.cs` | Tema oscuro, cinta, comando y registro. |
 | `AppConfig.cs`, `PartitionName.cs` | Configuración y plantilla de Partición. |

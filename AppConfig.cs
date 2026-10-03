@@ -179,11 +179,15 @@ namespace BlockRebar
         [JsonPropertyName("enabled")] public bool Enabled { get; set; } = false;
         [JsonPropertyName("scale")] public int Scale { get; set; } = 20;
         [JsonPropertyName("marginMm")] public double MarginMm { get; set; } = 500;
+        /// <summary>Profundidad de vista mas alla del plano de corte (mm).</summary>
+        [JsonPropertyName("depthMm")] public double DepthMm { get; set; } = 500;
+        /// <summary>Tipo de vista de seccion (ViewFamilyType) exacto o fragmento; vacio = el primero del proyecto.</summary>
+        [JsonPropertyName("viewTypeName")] public string ViewTypeName { get; set; } = "";
         /// <summary>Comodines: {marca}, {id}, {letra} (A o B).</summary>
         [JsonPropertyName("nameTemplate")] public string NameTemplate { get; set; } = "{marca} - Sección {letra}";
         /// <summary>Familia (o fragmento) de etiqueta de barra; vacio = sin etiquetas.</summary>
         [JsonPropertyName("tagFamilyName")] public string TagFamilyName { get; set; } = "";
-        /// <summary>Acero como solido en las vistas 3D (SetSolidInView solo admite View3D).</summary>
+        /// <summary>Vista 3D activa en detalle fino (acero como solido en Revit 2027) con el acero del plugin sin ocultar.</summary>
         [JsonPropertyName("showSolid")] public bool ShowSolid { get; set; } = false;
     }
 
@@ -342,6 +346,8 @@ namespace BlockRebar
             if (Preview.PlanLayer != "F1" && Preview.PlanLayer != "F2" && Preview.PlanLayer != "F3") Preview.PlanLayer = "F1";
             if (SectionViews.Scale <= 0) SectionViews.Scale = 20;
             if (SectionViews.MarginMm < 0) SectionViews.MarginMm = 0;
+            if (SectionViews.DepthMm <= 0) SectionViews.DepthMm = 500;
+            if (SectionViews.ViewTypeName == null) SectionViews.ViewTypeName = "";
             if (string.IsNullOrWhiteSpace(SectionViews.NameTemplate)) SectionViews.NameTemplate = "{marca} - Sección {letra}";
             if (SectionViews.TagFamilyName == null) SectionViews.TagFamilyName = "";
         }

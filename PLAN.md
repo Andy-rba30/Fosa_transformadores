@@ -413,16 +413,51 @@ comprueba:
   apertura, `Poly2D` (unión, offset, apertura, ancho mínimo, inset por arista), config
   (ida y vuelta por JSON con las claves exactas) y partición con `{familia}`.
 
-## 7. Fase opcional: Rejillas de foso (otro botón, solo si se pide)
+## 7. Fase opcional: Rejillas de foso (fase 3, pedida por el usuario; se empieza tras probar la 2c)
 
-Lee los bordes superiores de cada foso y, por tramo recto, coloca ángulos de borde (familia
-configurable, por defecto L2-1/2" × 2-1/2" × 1/4") en los dos bordes con retiro en extremos
-(125 mm) y pernos de expansión de 1/2" (5 por ángulo), y rejillas (familia configurable,
-alto 38 mm, al ras del tope): `n = techo(L / largoMaxMm)`, pieza = `L/n − holgura`, ancho
-= ancho del foso − 10. Con 825 / 5 y el foso del plano: los tramos del lado de 3800 llevan
-las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van entre ellos
-(L = 3300 → 4 piezas de 820 × 590), como el cuadro de parrillas P1/P2. Clase pura
-`GridPlan` + `Tests`, generador y ventana propios. No se empieza hasta que el acero funcione.
+Botón propio ("Rejillas de foso") que lee los bordes superiores de cada foso y coloca, por
+tramo recto, **ángulos de borde** y **rejillas**, con su metrado y las mismas reglas que el acero.
+
+### Familias
+
+- **Ángulos**: Structural Framing de acero; familia y tipo configurables en `config.json`
+  (`grids.angleFamilyName`, `grids.angleTypeName`). Por defecto: familia que contenga
+  "Angle" y tipo `L2-1/2X2-1/2X1/4` (o el equivalente métrico `L 63.5x63.5x6.4`). Si no
+  está cargada: no se coloca, se avisa y la fase se marca en **amarillo** en la ventana,
+  igual que los tipos de barra (regla `NameMatch`: exacto, fragmento único, ambiguo).
+- **Rejillas**: Generic Model con parámetros de instancia **Largo**, **Ancho** y **Espesor**
+  (`grids.gridFamilyName`, nombre configurable). Si no existe en el proyecto, la ventana ofrece
+  el botón **"Crear familia de rejilla"**, que la genera desde la plantilla Generic Model
+  (extrusión rectangular gobernada por esos tres parámetros, Espesor = 38 mm), la guarda junto
+  a la DLL y la carga en el proyecto.
+- **Pernos de expansión de 1/2"**: solo se cuentan (`grids.boltsPerAngle`, 5 por ángulo por
+  defecto, editable) y se reportan en el informe; no se modelan.
+
+### Colocación
+
+- **Ángulos** en los dos bordes de cada tramo de foso, con el tope al ras de la cara superior y
+  **retiro en los extremos** configurable (125 mm por defecto). **Longitudes editables por
+  lado** en la ventana, porque el plano es ambiguo (texto: 3050 en el lado largo y 3400 en el
+  lado corto; cota suelta: 2070).
+- **Rejillas** al ras del tope: `n = techo(L / largoMax)`, pieza = `L/n − holgura`, ancho =
+  ancho del foso − 10. Por defecto `largoMax` 825 y `holgura` 5. Con el bloque del plano debe
+  dar **5 piezas de 695 × 590 por cada lado de 3800 (P1)** y **4 de 820 × 590 por cada lado de
+  4800 (P2)**: los tramos del lado de 3800 llevan las esquinas (L = 3500) y los del lado de
+  4800 van entre ellos (L = 3300). Es la comprobación obligatoria de `Tests/`.
+- **Lámina e informe**: ángulos y rejillas se dibujan en la planta y en las secciones y salen
+  en el informe con su propio metrado: m de ángulo, kg (peso lineal del perfil) y número de
+  pernos.
+- **Mismas reglas que el acero**: subtransacción por elemento, marca del plugin (comentario
+  `BlockRebar GRID` / `BlockRebar ANGLE`), "Borrar y recolocar" sin duplicar y Ctrl+Z que lo
+  deshace todo.
+
+### Arquitectura prevista
+
+`GridPlan.cs` (puro: tramos por foso, ángulos con retiro, reparto de piezas, metrado) +
+`Tests/` (caso del plano: P1 5 × 695 × 590, P2 4 × 820 × 590), `GridGenerator.cs` (Revit:
+Structural Framing por `NewFamilyInstance` con curva, Generic Model con sus tres parámetros,
+familia de rejilla generada con `Document.EditFamily` / plantilla, marca y borrado), panel
+"Rejillas" en la ventana, dibujo en `PlanPreview` / `SectionPreview`, informe.
 
 ## Decisiones de diseño
 
@@ -559,9 +594,16 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] 2a probada en Revit 2027.2 por el usuario ([653044 LOSA_TRANSF], Foundation Slab 3600 × 3300 × 1300: plataforma 2100 × 1800, murete en anillo, foso 600 × 800, 0 choques, tope 264.099 en compartidas). Correcciones: encuadre de las secciones con etiquetas y niveles (márgenes según el ancho de los textos), rótulos y cotas de la planta en bandas sin solapes.
 - [x] Regla de tipos de barra ambiguos (`NameMatch`): exacto primero; un fragmento con varios candidatos se marca en amarillo con la lista y Armar queda desactivado hasta elegir; "Guardar como valores por defecto" guarda el nombre exacto. 7 comprobaciones nuevas en `Tests/` (293 en total).
 - [x] Entrega 2b: `RebarGenerator` (CreateFromCurves con patas como tramos, F7 estilo estribo con reintento estándar, arrays `SetLayoutAsFixedNumber`, Partición + comentario `BlockRebar F#`, red de seguridad del plan por choques, red 1 antes de crear, red 2 con la geometría real, comparación de barras y longitudes con deducción de doblado), comando con subtransacción por elemento, pregunta "borrar y rearmar / conservar" si ya hay armadura del plugin, botón "Borrar armado del plugin" e informe final (`ReportWindow`) con tabla por familia y pesos. Compila en Linux (0 errores). **Pendiente de probar en Revit 2027.2.**
-- [ ] Entrega 2c (opcional): botón "Crear vistas de sección en Revit".
+- [x] Entrega 2c: `SectionViews` (ViewSection A-A y B-B en las líneas de corte de la lámina, escala 1:20, detalle fino, recorte = bloque + margen, profundidad configurable, nombre por plantilla con sufijo si existe, acero del plugin sin ocultar y con el conjunto completo, una etiqueta por conjunto y familia visible si la familia de etiqueta está cargada, acero sólido en la 3D activa opcional); casilla "Crear las vistas al armar" y botón "Crear solo las vistas de sección". Compila en Linux. **Pendiente de probar en Revit 2027.2.**
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
 - [ ] Fase 4 (opcional): rejillas de foso.
+
+### Notas de implementación de la entrega 2c
+
+- Caja de la sección: `BasisX` = dirección del corte (u en A-A, v en B-B), `BasisY` = Z, `BasisZ` = `BasisX × Z` (hacia el observador): en A-A se mira hacia +v y en B-B hacia −u, igual que las flechas de la planta. `Max.Z = 0` deja el plano de corte en el origen; `Min.Z = −profundidad`.
+- Etiquetas: `IndependentTag.Create` con referencia al conjunto; solo conjuntos cuya caja corta el volumen de la sección, uno por familia (comentario `BlockRebar F#`); cabezas alternadas sobre el tope y bajo la cara inferior, escalonadas.
+- La posición de los cortes de cada bloque se guarda en la ventana al moverlos (`CutsOf`); los bloques no vistos usan el centro.
+- Las vistas van en su propia subtransacción después de la del armado: un fallo en las vistas no deshace las barras.
 
 ### Notas de implementación de la entrega 2b
 

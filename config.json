@@ -31,6 +31,6 @@
 
   "levelReference": "shared",
   "preview": { "showDims": true, "showLabels": true, "showCovers": false, "planLayer": "F1" },
-  "sectionViews": { "enabled": false, "scale": 20, "marginMm": 500, "nameTemplate": "{marca} - Sección {letra}",
-                    "tagFamilyName": "", "showSolid": false }
+  "sectionViews": { "enabled": false, "scale": 20, "marginMm": 500, "depthMm": 500, "viewTypeName": "",
+                    "nameTemplate": "{marca} - Sección {letra}", "tagFamilyName": "", "showSolid": false }
 }

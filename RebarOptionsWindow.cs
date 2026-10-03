@@ -24,7 +24,17 @@ namespace BlockRebar
         private readonly AppConfig _cfg;
         private readonly IList<BarTypes.Info> _barTypes;
         private readonly IList<HostAnalysis> _items;
+        private readonly IList<SectionViews.TagType> _tagTypes;
         private readonly Func<string, double> _elevationOffset;
+        /// <summary>True si el usuario pulso "Crear solo las vistas de seccion" (sin armar).</summary>
+        public bool ViewsOnlyRequested { get; private set; }
+        /// <summary>Posicion de los cortes A y B de cada bloque (pies, locales), tal y como quedaron en la lamina.</summary>
+        private readonly Dictionary<HostAnalysis, (double a, double b)> _cutsByItem = new Dictionary<HostAnalysis, (double, double)>();
+        // vistas de seccion
+        private CheckBox _svOn, _svSolid;
+        private TextBox _svScale, _svMargin, _svDepth, _svName, _svViewType;
+        private ComboBox _svTag;
+        private Button _viewsButton;
         private readonly PreviewState _state = new PreviewState();
 
         /// <summary>Configuracion final si el usuario pulso "Armar"; null si cancelo.</summary>
@@ -74,11 +84,13 @@ namespace BlockRebar
         private static readonly Thickness Pad = new Thickness(4, 2, 4, 2);
         private static readonly Brush SelectedBrush = RevitTheme.Selection;
 
-        public RebarOptionsWindow(AppConfig cfg, IList<BarTypes.Info> barTypes, IList<HostAnalysis> items, Func<string, double> elevationOffset)
+        public RebarOptionsWindow(AppConfig cfg, IList<BarTypes.Info> barTypes, IList<HostAnalysis> items, Func<string, double> elevationOffset,
+                                  IList<SectionViews.TagType> tagTypes = null)
         {
             _cfg = cfg;
             _cfg.Normalize();
             _barTypes = barTypes ?? new List<BarTypes.Info>();
+            _tagTypes = tagTypes ?? new List<SectionViews.TagType>();
             _items = items;
             _elevationOffset = elevationOffset ?? (r => 0);
 
@@ -144,6 +156,7 @@ namespace BlockRebar
             left.Children.Add(BuildF7());
             left.Children.Add(BuildF8());
             left.Children.Add(BuildGeneral());
+            left.Children.Add(BuildSectionViews());
             var scroll = new ScrollViewer
             {
                 Content = left, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -384,6 +397,51 @@ namespace BlockRebar
             return group;
         }
 
+        private UIElement BuildSectionViews()
+        {
+            SectionViewsCfg sv = _cfg.SectionViews;
+            var group = new GroupBox { Header = "Vistas de seccion en Revit (A-A y B-B en las lineas de corte de la lamina)", Padding = new Thickness(4) };
+            var grid = FormGrid();
+            int r = 0;
+            _svOn = new CheckBox { Content = "Crear las vistas de seccion A y B al armar", IsChecked = sv.Enabled, Margin = Pad };
+            AddRow(grid, r++, "", _svOn, "Tras armar cada bloque se crean dos ViewSection en sus lineas de corte A-A y B-B, con el acero del plugin sin ocultar y, si hay familia de etiqueta, una etiqueta por conjunto y familia.");
+            var sc = new StackPanel { Orientation = Orientation.Horizontal };
+            _svScale = NumBox(sv.Scale); Hook(_svScale);
+            sc.Children.Add(new TextBlock { Text = "1 :", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            sc.Children.Add(_svScale);
+            sc.Children.Add(new TextBlock { Text = "margen (mm):", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _svMargin = NumBox(sv.MarginMm); Hook(_svMargin);
+            sc.Children.Add(_svMargin);
+            sc.Children.Add(new TextBlock { Text = "prof.:", Margin = Pad, VerticalAlignment = VerticalAlignment.Center });
+            _svDepth = NumBox(sv.DepthMm); Hook(_svDepth);
+            sc.Children.Add(_svDepth);
+            AddRow(grid, r++, "Escala:", sc, "Escala de la vista (1:20), margen del recorte alrededor del bloque y profundidad de vista mas alla del plano de corte (mm).");
+            _svName = new TextBox { Text = sv.NameTemplate, Margin = Pad }; Hook(_svName);
+            AddRow(grid, r++, "Nombre:", _svName, "Plantilla del nombre de las vistas: {marca} (o el id si no hay marca), {id}, {tipo}, {letra} (A o B). Si ya existe se anade (2), (3)...");
+            _svViewType = new TextBox { Text = sv.ViewTypeName, Margin = Pad }; Hook(_svViewType);
+            AddRow(grid, r++, "Tipo de vista:", _svViewType, "Tipo de vista de seccion (ViewFamilyType), exacto o fragmento. Vacio = el primero del proyecto.");
+            _svTag = new ComboBox { Margin = Pad };
+            _svTag.Items.Add("(sin etiquetas)");
+            foreach (SectionViews.TagType t in _tagTypes) _svTag.Items.Add(t.Display);
+            SectionViews.TagType match = SectionViews.Find(_tagTypes, sv.TagFamilyName);
+            _svTag.SelectedIndex = match == null ? 0 : _tagTypes.IndexOf(match) + 1;
+            if (match == null && !string.IsNullOrWhiteSpace(sv.TagFamilyName))
+            {
+                List<SectionViews.TagType> c = SectionViews.Candidates(_tagTypes, sv.TagFamilyName);
+                _svTag.Background = RevitTheme.OwnValue; _svTag.BorderBrush = AmbiguousBorder; _svTag.BorderThickness = new Thickness(2);
+                _svTag.ToolTip = c.Count == 0
+                    ? "La familia de etiqueta \"" + sv.TagFamilyName + "\" de config.json no esta cargada: las vistas se crearan sin etiquetas (carga la familia o elige otra)."
+                    : "AMBIGUO: \"" + sv.TagFamilyName + "\" coincide con " + string.Join(", ", c.Select(x => x.Display)) + ". Elige una.";
+            }
+            _svTag.SelectionChanged += (s, e) => { _svTag.ClearValue(Control.BackgroundProperty); _svTag.ClearValue(Control.BorderBrushProperty); _svTag.ClearValue(Control.BorderThicknessProperty); };
+            Hook(_svTag);
+            AddRow(grid, r++, "Etiqueta:", _svTag, "Familia de etiqueta de armadura (Structural Rebar Tags) cargada en el proyecto: una etiqueta por conjunto y familia visible en cada vista. Amarillo = la de config.json no esta cargada o es ambigua.");
+            _svSolid = new CheckBox { Content = "Acero como solido en la vista 3D activa", IsChecked = sv.ShowSolid, Margin = Pad }; Hook(_svSolid);
+            AddRow(grid, r++, "", _svSolid, "Si la vista activa es 3D se pone en detalle fino (en Revit 2027 asi se ve el acero como solido) y el acero del plugin sin ocultar; en las secciones el acero se muestra sin ocultar con el conjunto completo.");
+            group.Content = grid;
+            return group;
+        }
+
         private UIElement BuildLamina()
         {
             var grid = new Grid();
@@ -498,6 +556,19 @@ namespace BlockRebar
                 Close();
             };
             buttons.Children.Add(_deleteButton);
+
+            _viewsButton = new Button { Content = "Crear solo las vistas de seccion", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
+            _viewsButton.ToolTip = "Crea las vistas A-A y B-B de cada bloque en sus lineas de corte sin armar nada (util en bloques ya armados: se etiqueta la armadura del plugin que ya tengan).";
+            _viewsButton.Click += (s, e) =>
+            {
+                AppConfig c = ReadConfig(out string err);
+                if (err != null) { _message.Foreground = RevitTheme.Error; _message.Text = err; return; }
+                Result = c;
+                ViewsOnlyRequested = true;
+                DialogResult = true;
+                Close();
+            };
+            buttons.Children.Add(_viewsButton);
 
             var save = new Button { Content = "Guardar como valores por defecto", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
             save.ToolTip = "Guarda lo elegido en config.json (" + AppConfig.ConfigPath() + ") para las proximas veces.";
@@ -654,6 +725,16 @@ namespace BlockRebar
             c.WallMaxWidthMm = ReadNum(_wallMax, "ancho maximo de murete", 1, errors);
             c.LevelReference = new[] { "shared", "project", "internal" }[Math.Max(0, _levelRef.SelectedIndex)];
             c.PartitionTemplate = _partition.Text.Trim();
+            SectionViewsCfg sv = c.SectionViews;
+            sv.Enabled = _svOn.IsChecked == true;
+            sv.Scale = (int)Math.Round(ReadNum(_svScale, "escala de las vistas", 1, errors));
+            sv.MarginMm = ReadNum(_svMargin, "margen de las vistas", 0, errors);
+            sv.DepthMm = ReadNum(_svDepth, "profundidad de las vistas", 1, errors);
+            sv.NameTemplate = _svName.Text.Trim();
+            sv.ViewTypeName = _svViewType.Text.Trim();
+            sv.TagFamilyName = _svTag.SelectedIndex > 0 && _svTag.SelectedIndex - 1 < _tagTypes.Count ? _tagTypes[_svTag.SelectedIndex - 1].Display
+                               : (_svTag.SelectedIndex == 0 ? "" : _cfg.SectionViews.TagFamilyName);
+            sv.ShowSolid = _svSolid.IsChecked == true;
             c.Preview.PlanLayer = Families.Code(_state.PlanLayer);
             c.Preview.ShowDims = _state.ShowDims; c.Preview.ShowLabels = _state.ShowLabels; c.Preview.ShowCovers = _state.ShowCovers;
             c.Normalize();
@@ -798,6 +879,15 @@ namespace BlockRebar
             finally { _refreshing = false; }
         }
 
+        /// <summary>Cortes A y B de un bloque (los de la lamina si se vio; si no, el centro).</summary>
+        public (double a, double b) CutsOf(HostAnalysis item, AppConfig cfg)
+        {
+            if (_cutsByItem.TryGetValue(item, out (double a, double b) c)) return c;
+            BlockTopology t = item.Frame(cfg)?.Topology;
+            if (t == null || t.Bottom == null) return (0, 0);
+            return (0.5 * (t.VMin + t.VMax), 0.5 * (t.UMin + t.UMax));
+        }
+
         /// <summary>Recalcula las dos secciones en los cortes actuales y redibuja las tres vistas.</summary>
         private void ShowViews(bool newElement)
         {
@@ -836,6 +926,7 @@ namespace BlockRebar
                 _cutB = BlockSection.Cut(_lastPlan, frame.Topology, line, tol, zBase, s => frame.SampledTop(line, s));
                 _lastCutB = _state.CutB;
             }
+            if (_selected != null) _cutsByItem[_selected] = (_state.CutA, _state.CutB);
             return true;
         }
 

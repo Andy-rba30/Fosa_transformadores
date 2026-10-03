@@ -51,6 +51,8 @@ namespace BlockRebar
             try { barTypes = BarTypes.Read(doc); }
             catch (Exception ex) { barTypes = new List<BarTypes.Info>(); Log.Error("BarTypes.Read", ex); }
             Log.Write("tipos de barra: " + (barTypes.Count == 0 ? "ninguno" : string.Join(", ", barTypes.Select(b => b.Display))));
+            List<SectionViews.TagType> tagTypes = SectionViews.ReadTagTypes(doc);
+            Log.Write("etiquetas de armadura: " + (tagTypes.Count == 0 ? "ninguna" : string.Join(", ", tagTypes.Select(t => t.Display))));
 
             // --- 1. Analisis geometrico de cada elemento (solo lectura, sin transaccion) ---
             var items = new List<HostAnalysis>();
@@ -65,7 +67,7 @@ namespace BlockRebar
 
             // --- 2. Lamina: el usuario revisa lo detectado y elige el armado ---
             Func<string, double> offset = r => BlockOutline.ElevationOffset(doc, r);
-            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, items, offset);
+            var win = new RebarOptionsWindow(cfg.Clone(), barTypes, items, offset, tagTypes);
             try { new WindowInteropHelper(win).Owner = commandData.Application.MainWindowHandle; } catch { }
             bool? ok;
             try { ok = win.ShowDialog(); }
@@ -83,7 +85,10 @@ namespace BlockRebar
             if (win.Result == null) return Result.Cancelled;
             cfg = win.Result;
 
-            // --- 3b. Elementos que ya tienen barras del plugin: borrar antes de rearmar o conservar ---
+            // --- 3b. Solo vistas de seccion (sin armar) ---
+            if (win.ViewsOnlyRequested) return CreateViewsOnly(doc, items, cfg, win, tagTypes, commandData);
+
+            // --- 3c. Elementos que ya tienen barras del plugin: borrar antes de rearmar o conservar ---
             var withExisting = items.Where(i => i.Outline != null && i.PluginRebars.Count > 0).ToList();
             bool deleteFirst = false;
             if (withExisting.Count > 0)
@@ -152,6 +157,30 @@ namespace BlockRebar
                         {
                             sub.Commit();
                             armed++;
+                            SectionViews.Result views = null;
+                            if (cfg.SectionViews.Enabled)
+                            {
+                                // las vistas van en su propia subtransaccion: si fallan no se pierde el armado
+                                using (SubTransaction subV = new SubTransaction(doc))
+                                {
+                                    subV.Start();
+                                    try
+                                    {
+                                        var ids = res.Created.Select(c => c.Id).ToList();
+                                        if (!deleteFirst) ids.AddRange(item.PluginRebars);
+                                        (double a, double b) cuts = win.CutsOf(item, cfg);
+                                        views = SectionViews.Create(doc, item, cfg, cuts.a, cuts.b, ids, tagTypes);
+                                        subV.Commit();
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        subV.RollBack();
+                                        views = new SectionViews.Result();
+                                        views.Warnings.Add("vistas de seccion: " + ex.Message);
+                                        Log.Error("SectionViews " + tag, ex);
+                                    }
+                                }
+                            }
                             deletedSets += deleted;
                             total += res.Created.Count;
                             string line = tag + desc + "  ->  " + res.Summary;
@@ -159,6 +188,7 @@ namespace BlockRebar
                             if (res.Failed.Count > 0) line += "  INCOMPLETO, no se pudieron crear: " + string.Join(" | ", res.Failed);
                             if (res.Warnings.Count > 0) line += "  AVISOS: " + string.Join(" | ", res.Warnings);
                             if (!res.ComparisonOk) line += "  DIFERENCIAS entre lo previsto y lo leido de Revit (ver detalle)";
+                            if (views != null) line += "  VISTAS: " + views.Views.Count + " creada(s)" + (views.Tags > 0 ? ", " + views.Tags + " etiqueta(s)" : "") + (views.Warnings.Count > 0 ? " (avisos, ver detalle)" : "");
                             log.Add(line);
 
                             detail.AppendLine("== " + tag.Trim() + " ==");
@@ -173,6 +203,11 @@ namespace BlockRebar
                             foreach (string c in res.Comparison) detail.AppendLine(c);
                             foreach (string w in res.Warnings) detail.AppendLine("aviso: " + w);
                             foreach (string f in res.Failed) detail.AppendLine("NO CREADO: " + f);
+                            if (views != null)
+                            {
+                                foreach (string v in views.Lines) detail.AppendLine(v);
+                                foreach (string w in views.Warnings) detail.AppendLine("aviso (vistas): " + w);
+                            }
                             detail.AppendLine();
                         }
                         else
@@ -201,6 +236,46 @@ namespace BlockRebar
                             "---- DETALLE ----" + Environment.NewLine + detail + "log: " + Log.Path;
             Log.Block("Armar bloques con foso", report);
             ShowReport(commandData, "Armado de bloques con foso", report);
+            return Result.Succeeded;
+        }
+
+        private static Result CreateViewsOnly(Document doc, List<HostAnalysis> items, AppConfig cfg, RebarOptionsWindow win, List<SectionViews.TagType> tagTypes, ExternalCommandData commandData)
+        {
+            var lines = new List<string>();
+            int views = 0, tags = 0;
+            using (Transaction tx = new Transaction(doc, "Crear vistas de seccion"))
+            {
+                tx.Start();
+                foreach (HostAnalysis item in items)
+                {
+                    if (item.Outline == null) { lines.Add(item.Tag + "sin geometria legible: sin vistas (" + item.Error + ")"); continue; }
+                    using (SubTransaction sub = new SubTransaction(doc))
+                    {
+                        sub.Start();
+                        try
+                        {
+                            (double a, double b) cuts = win.CutsOf(item, cfg);
+                            SectionViews.Result r = SectionViews.Create(doc, item, cfg, cuts.a, cuts.b, item.PluginRebars, tagTypes);
+                            sub.Commit();
+                            views += r.Views.Count; tags += r.Tags;
+                            lines.Add(item.Tag + r.Views.Count + " vista(s)" + (item.PluginRebars.Count == 0 ? " (el bloque no tiene armadura del plugin: sin etiquetas)" : ""));
+                            lines.AddRange(r.Lines.Select(l => "  " + l));
+                            lines.AddRange(r.Warnings.Select(w => "  aviso: " + w));
+                        }
+                        catch (Exception ex)
+                        {
+                            sub.RollBack();
+                            lines.Add(item.Tag + "ERROR al crear las vistas: " + ex.Message);
+                            Log.Error("CreateViewsOnly " + item.Tag, ex);
+                        }
+                    }
+                }
+                tx.Commit();
+            }
+            string report = views + " vista(s) de seccion creadas" + (tags > 0 ? ", " + tags + " etiqueta(s)" : "") + ". No se ha creado ni borrado ninguna barra." +
+                            Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, lines) + Environment.NewLine + "log: " + Log.Path;
+            Log.Block("Crear vistas de seccion", report);
+            ShowReport(commandData, "Vistas de seccion", report);
             return Result.Succeeded;
         }
 
