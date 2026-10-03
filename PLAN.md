@@ -37,8 +37,8 @@ add-in añada su botón al desplegable común.
 
 | Fase | Contenido | Estado |
 |------|-----------|--------|
-| 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | **hecho — esperando OK** |
-| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano; mostrar la salida de los tests | pendiente |
+| 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | hecho, OK recibido |
+| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **en curso** |
 | 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | pendiente |
 | 2b (opcional) | Botón **Crear vistas de sección en Revit** tras Armar (`SectionViews.cs`): dos `ViewSection` A y B, acero sin ocultar, etiquetas opcionales. No bloquea la fase 1 | pendiente |
 | 3 | Pruebas del usuario en Revit 2027.2 y correcciones | pendiente |
@@ -142,38 +142,59 @@ reales de los tipos de barra):
   rectas en los huecos.
 - F2: el tope de la malla a `belowRecessFloorMm` bajo el fondo del foso **más profundo**
   (barras u a `zFoso − b − d/2`, barras v colgadas debajo). Extensión `full` (todo el
-  contorno inferior) o `recess` (solo bajo fosos, prolongando `anchorMm` dentro del
-  hormigón contiguo). Patas hacia abajo en extremos exteriores (`legDownMm`).
+  contorno inferior, por defecto) o `recess` (solo bajo fosos, prolongando `anchorageMm`,
+  600, dentro del hormigón contiguo; los extremos de anclaje van rectos y sin
+  recubrimiento). Patas hacia abajo en extremos exteriores (`legDownMm`).
+- **Caras de PLATAFORMA hacia el foso** (según el corte del plano), desde la cara hacia
+  dentro: **F4 (pegada a la cara) → patas de F3 → F5 (la más interior)**. F5 mantiene ese
+  plano en toda la altura, también por debajo de donde terminan las patas de F3.
 - F3: barras u a `zTope − ct − d/2`, barras v debajo, recortadas contra cada plataforma
-  con inset por arista: `coverEdge + d/2` en aristas exteriores y
-  `coverWall + d4 + d5 + d/2` en caras de foso (por dentro de F4 y F5; si F4 o F5 están
-  desactivadas no se suma su diámetro). Patas hacia abajo (`legDownMm`) en **todos** los
-  extremos.
+  con inset por arista: `coverEdge + d/2` en aristas exteriores y `coverWall + d4 + d/2`
+  en caras de foso (por dentro de F4; si F4 está desactivada no se suma su diámetro); las
+  barras v se retranquean un diámetro más. Patas hacia abajo (`legDownMm`) en **todos** los
+  extremos de cara (exterior o de foso); rectas en los límites internos con un murete.
 - F4: en cada cara de foso de plataforma, a `coverWall + d/2`; vertical desde
   `zTope − ct − d/2` bajando `verticalMm`, pie `footMm` horizontal hacia el foso (bajo su
   fondo). Si el pie queda a la altura de F1 o F2 (±d) se baja/sube a **media altura entre
   ambas mallas** y se avisa; si el vertical no llega bajo el fondo del foso se alarga hasta
-  `zFoso − coverWall − d/2` y se avisa. Posiciones a lo largo de la cara desde
-  `coverWall + 1.5 d` de cada esquina, `n = techo(L/s)`. Un conjunto por cara (plano de la
-  L perpendicular a la cara; array a lo largo de ella).
-- F5: a `coverWall + d4 + d/2` de la cara (por dentro de F4), cotas desde
-  `zFoso + coverWall + d/2` hasta `zTope − ct − d3u − d3v − d/2` (por debajo de F3),
-  `n = techo(H/s)`. Por tramos rectos por cara **prolongados hasta la esquina** de la línea
-  de la cara contigua (se cruzan en la esquina); opción `shape: "ring"` = una polilínea
-  cerrada por traslape (`lapMm`) alrededor de la plataforma si Revit la crea limpia.
+  `zFoso − coverWall − d/2` y se avisa; si el pie no cabe hasta la cara opuesta se acorta
+  al recubrimiento y se avisa. Posiciones a lo largo de la cara desde `coverWall + 1.5 d`
+  de cada esquina de foso (o `coverEdge + d/2` si la esquina es exterior), `n = techo(L/s)`.
+  Un conjunto por cara (plano de la L perpendicular a la cara; array a lo largo de ella).
+- F5: a `coverWall + d4 + d3 + d/2` de la cara (por dentro de F4 y de las patas de F3),
+  cotas desde `zFoso + coverWall + d/2` hasta `zTope − ct − d3u − d3v − d/2` (por debajo
+  de F3), `n = techo(H/s)`. `shape: "segments"` (por defecto) = tramos rectos por cara
+  **prolongados hasta la esquina**: cada barra llega al cruce con la línea de la barra de la
+  cara contigua y sigue `lapMm` (400) más allá, recortada al recubrimiento del hormigón;
+  `shape: "ring"` = una polilínea cerrada por traslape `lapMm` alrededor de la plataforma
+  (si las caras de foso no cierran un anillo, vuelve a tramos y avisa). Un conjunto por
+  cara (array vertical).
+- **Murete**, desde la cara exterior hacia el foso: **F6 → pata exterior de F7 → F8 → pata
+  interior de F7 → cara del foso**. Antes de armar se comprueba que entra: con 150 − 2 × 40
+  = 70 mm deben caber las 4 barras de 3/8" y, sobre todo, la **horquilla**: distancia entre
+  ejes de patas `w − (cw + d6 + d7/2) − (cw + d7/2)` ≥ `diámetro mínimo de doblado de
+  estribo/horquilla + d7` (el de `RebarBarType.StirrupTieBendDiameter`, 4 d en ACI; F7 se
+  crea con estilo estribo/horquilla). Si no entra → **rechazo con mensaje claro** que da el
+  ancho del murete, el espacio libre y el diámetro de doblado.
 - F6: en la cara exterior del murete a `coverWall + d/2`, desde `coverBottom + d/2` (al
   lado de las patas de F1: traslape) hasta `zTope − ct − d7 − d/2` (bajo la horquilla).
-  Posiciones a lo largo de cada tramo recto exterior del murete.
-- F7: horquilla en U invertida: barra horizontal sobre la corona a `zTope − ct − d/2`
-  **de cara a cara** del murete (patas a `coverWall + d/2` de cada cara, `legMm` hacia
-  abajo). El ancho local del murete se mide por sonda perpendicular a la cara exterior.
-  Posiciones **intercaladas** con F6 (desplazadas media separación) para no coincidir en el
-  mismo plano. Si el ancho entre patas no admite el diámetro de doblado del tipo se avisa
-  antes de crear.
-- F8: horizontales a `coverWall + max(d6, d7) + d/2` de **cada** cara del murete
-  (exterior y de foso; opción `faces: "exterior"`), cotas desde `coverBottom + 2 d1 + d/2`
-  (encima de F1) hasta la corona bajo F7, `n = techo(H/s)`; por tramos rectos prolongados
-  hasta la esquina ("cerradas por tramos"), con la misma opción `ring`.
+  Posiciones a lo largo de cada tramo recto exterior del murete, `n = techo(L/s)` desde
+  `coverWall + 1.5 d` de cada esquina exterior.
+- F7: horquilla en U invertida: barra horizontal sobre la corona a `zTope − ct − d/2`, pata
+  exterior **pegada por dentro de F6** (`coverWall + d6 + d/2`), pata interior a
+  `coverWall + d/2` de la cara del foso, `legMm` hacia abajo. El ancho local del murete se
+  mide por sonda perpendicular a la cara exterior en cada posición (si la cara opuesta no es
+  de foso, esa posición se omite con aviso). `placement: "aligned"` (por defecto) =
+  **alineada con F6** (mismas posiciones @125, traslape por contacto); `"staggered"` =
+  desplazada media separación. Un conjunto por tramo recto exterior.
+- F8: `layers: 1` (por defecto): **una sola capa entre las dos patas de F7**, a
+  `coverWall + d6 + d7 + d/2` de la cara exterior, y **por debajo del murete sigue por la
+  cara exterior hasta zBase** (mismo plano en toda la altura): cotas desde
+  `coverBottom + 2 d1 + d/2` (encima de F1) hasta `zTope − ct − d7 − d/2` (bajo la
+  horquilla), `n = techo(H/s)`. `layers: 2` añade una segunda capa en la cara del foso a
+  `coverWall + d7 + d/2`, solo en la altura del murete. "Cerradas por tramos": tramos rectos
+  por cara prolongados hasta la esquina con `lapMm`, o `shape: "ring"` como en F5. Un
+  conjunto por tramo (array vertical).
 
 Reglas comunes: separación = máximo (`n = techo(L/s)`), tramos menores que
 `minBarLengthMm` se omiten y se cuentan; comprobación de cotas dentro del canto; chequeo de
@@ -250,9 +271,11 @@ dirección**, todo calculado por las mismas clases puras que usa el generador.
   murete, obtenidos de los cruces de la línea de corte con las regiones), **profundidad del
   foso** y **espesor de la base** (fondo de foso a cara inferior), y el canto total.
 - **Niveles a la derecha**: tope, fondo de cada foso y cara inferior, con la **cota real del
-  modelo**: elevación respecto al **punto base del proyecto** (por defecto), a las
-  **coordenadas compartidas** o interna, configurable (`levelReference` en `config.json` y
-  en la ventana). La capa Revit pasa el desfase; la clase pura solo suma.
+  modelo**: por defecto en **coordenadas compartidas** (punto de reconocimiento, porque los
+  planos vienen en cotas absolutas: el tope del plano es 261.906), con las opciones de
+  **punto base del proyecto** y **cota interna** (`levelReference` en `config.json` y en la
+  ventana, que **muestra qué referencia se está usando** junto a los niveles). La capa Revit
+  pasa el desfase; la clase pura solo suma.
 - **Recubrimientos**: con el interruptor activo se dibujan a trazos las líneas de
   recubrimiento (inferior, superior, borde, muro) dentro del perfil.
 - Terreno bajo la cara inferior como en Zapatas.
@@ -276,6 +299,26 @@ dirección**, todo calculado por las mismas clases puras que usa el generador.
 Todo el estado compartido vive en `PreviewState` (cortes, barra resaltada, familia aislada,
 capa de planta, interruptores); cada vista se suscribe y redibuja. La ventana recalcula
 `BlockPlan` al cambiar cualquier ajuste y `BlockSection.Cut` al mover un corte.
+
+### Modo diagnóstico: botón "Analizar sin armar"
+
+Abre un informe de texto (copiable) que lista, **por elemento**:
+
+- los **sólidos** leídos (volumen, descartados por < 1 %);
+- las **caras inferiores** encontradas (hacia abajo), cada una con su **cota** (interna y en
+  la referencia de niveles elegida), su área y si es la que fija zBase; también las caras
+  hacia abajo a cota intermedia (techo de cavidad / voladizo);
+- las **caras superiores** con su cota y área: las de zTope y los **fondos de foso**
+  (cota, profundidad, área, contorno, abierto por un lado o no);
+- las **caras verticales** (número) y las **caras inclinadas** (normal y cota) si las hay;
+- las **regiones del tope**: plataforma o murete, con su **ancho mínimo** (bisección de la
+  erosión con Clipper2), área y aristas por tipo (exterior / foso / interna);
+- el **motivo exacto de rechazo** (o "armable" con el resumen del plan).
+
+Pensado para familias de cimentación como "EXTRUCCION" cuyo `Elevation at Bottom` dice
+`<varies>`: el informe dice qué caras inferiores ve el plugin y cuál toma como base. La
+parte 2D (`BlockTopology.Describe()`) se prueba en consola; la de caras la añade
+`BlockOutline`.
 
 ### Lógica pura (`BlockSection`, probada en `Tests/`)
 
@@ -316,11 +359,14 @@ eléctrica N°1): recubrimientos 75 / 50 / 75 / 40, `wallMaxWidthMm` 300, F1 5/8
 300 arriba, F2 5/8"@125 `full` a 75 bajo el fondo, patas 220 abajo, F3 5/8"@125 patas 340
 abajo, F4 5/8"@125 vertical 1000 pie 370, F5 3/8"@200, F6 3/8"@125, F7 3/8"@125 patas 350,
 F8 3/8"@200, partición `BLQ-{marca}-{familia}`, tolerancia 2, barra mínima 300. Se añaden
-`anchorMm` (F2 `recess`, 600 por defecto), `lapMm` (anillos, 400) y `shape` / `faces`
-descritos arriba, más los de la lámina: `levelReference` (`"project"` por defecto,
-`"shared"` o `"internal"`), `preview` (`showDims`, `showLabels`, `showCovers`, capa de
-planta por defecto `"F1"`) y `sectionViews` (`enabled` false, `scale` 20, `marginMm` 500,
-`nameTemplate` `"{marca} - Sección {letra}"`, `tagFamilyName` `""`, `showSolid` false). El README recordará que las patas (300, 220, 340, 350) y F4 (1000/370) se
+`F2_recessMesh.anchorageMm` (600), `F5_recessFaceH.shape` / `lapMm` (`"segments"`, 400),
+`F7_wallHairpin.placement` (`"aligned"`), `F8_wallHoriz.layers` (1) / `shape` / `lapMm`,
+más los de la lámina: `levelReference` (`"shared"` por defecto, `"project"` o
+`"internal"`), `preview` (`showDims`, `showLabels`, `showCovers`, capa de planta por
+defecto `"F1"`) y `sectionViews` (`enabled` false, `scale` 20, `marginMm` 500,
+`nameTemplate` `"{marca} - Sección {letra}"`, `tagFamilyName` `""`, `showSolid` false).
+Las claves del JSON se escriben exactamente así (`F1_bottomMesh`…) con
+`JsonPropertyName`. El README recordará que las patas (300, 220, 340, 350) y F4 (1000/370) se
 midieron a escala en el plano y que el murete lleva 3/8" por defecto (la sección A) aunque la
 sección B dice 5/8".
 
@@ -348,11 +394,21 @@ comprueba:
   tope, fondo de foso y cara inferior. **Se imprime el conteo de círculos por familia en A-A
   y en B-B**, y se comprueba que una etiqueta por familia y lado no se repite. Mover el corte
   fuera del núcleo (por el foso) cambia el perfil y deja F3/F4/F5 fuera del corte.
-- Casos extra: bloque sin fosos (rechazo que remite a Zapatas), canaleta abierta por un
-  lado, dos fosos de distinta profundidad (F2 bajo el más profundo, F5 desde cada fondo),
-  foso que choca el pie de F4 con F2 (se recoloca a media altura con aviso), región mixta
-  plataforma + murete partida por la apertura, `Poly2D` (unión, offset, apertura, inset por
-  arista), config (ida y vuelta por JSON) y partición con `{familia}`.
+- **Dos casos de generalidad**, que imprimen la clasificación, las cantidades por familia
+  y el conteo de círculos por familia en A-A y en B-B:
+  - **(a) bloque con canaleta solo en un lado**: 4800 × 3800 × 1300, murete de 150 en el
+    lado v = 0, canaleta de 600 × 500 de profundidad a lo largo de u abierta por los dos
+    extremos (aristas abiertas = exteriores), plataforma en el resto. Debe dar 1 foso abierto,
+    1 plataforma y 1 murete recto (dos tramos exteriores cortos y uno largo).
+  - **(b) bloque con un foso rectangular central, sin murete**: 4000 × 3000 × 1200 con un
+    foso de 1500 × 1000 × 700 en el centro, todo plataforma alrededor. Debe dar 1 foso,
+    1 plataforma en anillo, 0 muretes, F4/F5 en las 4 caras del foso y nada de F6/F7/F8.
+- Casos extra: bloque sin fosos (rechazo que remite a Zapatas), dos fosos de distinta
+  profundidad (F2 bajo el más profundo, F5 desde cada fondo), pie de F4 que choca con F2
+  (se recoloca a media altura con aviso), murete demasiado estrecho para la horquilla
+  (rechazo con el mensaje del ancho), región mixta plataforma + murete partida por la
+  apertura, `Poly2D` (unión, offset, apertura, ancho mínimo, inset por arista), config
+  (ida y vuelta por JSON con las claves exactas) y partición con `{familia}`.
 
 ## 7. Fase opcional: Rejillas de foso (otro botón, solo si se pide)
 
@@ -391,23 +447,33 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 9. **Estado compartido** (`PreviewState`) entre las tres vistas: cortes, barra resaltada,
    familia aislada e interruptores; zoom y desplazamiento propios de cada vista.
 
-## Puntos a confirmar con el OK del plan
+## Decisiones confirmadas por el usuario (OK al plan)
 
 1. **Bloque sin fosos** (solo huecos pasantes o macizo): se rechaza remitiendo a Zapatas.
-   ¿De acuerdo, o se arma con F1 + F2 + F3 igualmente?
-2. **F8 en las dos caras del murete** por defecto (`faces: "both"`), por fuera de F6/F7 no
-   cabe: van por dentro (`coverWall + d6 + d/2`). ¿O solo en la cara exterior?
-3. **"Cerradas por tramos"** (F5 y F8) = tramos rectos por cara prolongados hasta la
-   esquina, con la opción `ring` (polilínea con traslape `lapMm`). ¿Correcto?
-4. **F2 `recess`**: anclaje `anchorMm` 600 por defecto dentro del hormigón contiguo.
-5. **F7 intercalada con F6** (media separación) en el mismo plano de la cara exterior.
-6. **Canaleta abierta por un lado**: se admite; sus aristas abiertas son exteriores.
+2. **F8 de una sola capa** entre las patas de F7 (por dentro de F6 y de la pata exterior de
+   F7), que por debajo del murete sigue por la cara exterior hasta zBase;
+   `F8_wallHoriz.layers` 1 | 2, por defecto 1.
+3. **Tramos rectos por cara prolongados hasta la esquina**, con opción de anillo por
+   traslape; la prolongación / traslape es el parámetro `lapMm`.
+4. **F2 `recess`** con anclaje `anchorageMm` (600); el modo por defecto sigue siendo `full`.
+5. **F7 alineada con F6** (`placement: "aligned"`, opción `"staggered"`), pata exterior
+   pegada por dentro de F6; orden F6 → F7 ext → F8 → F7 int → cara del foso; comprobación
+   de que entra con el diámetro mínimo de doblado de la horquilla, rechazo claro si no.
+6. **Canaleta abierta por un lado** admitida; sus aristas abiertas cuentan como exteriores.
+7. **Caras de plataforma hacia el foso**: F4 → patas de F3 → F5; F5 mantiene su plano en
+   toda la altura.
+8. **Modo diagnóstico** "Analizar sin armar" (caras inferiores con cota, fondos, regiones
+   con ancho mínimo, motivo exacto).
+9. **Lámina**: barra en plano = la más cercana dentro de media separación; perfil topológico
+   en tests y muestreado en Revit con aviso si difieren; **niveles en coordenadas compartidas
+   por defecto** mostrando la referencia; acero sólido solo en 3D; vistas de sección como
+   fase 2b.
 
 ## Progreso
 
 - [x] Clonado y análisis de Acero-Zapatas (arquitectura, convenciones, tests).
 - [x] PLAN.md.
-- [ ] OK del usuario al plan.
+- [x] OK del usuario al plan (decisiones de arriba).
 - [ ] Fase 1: clases puras (incluida `BlockSection`) + Tests (salida de los tests en el informe).
 - [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
 - [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
