@@ -72,17 +72,45 @@ choques (`ClashCheck`) y de separaciones reales (`CheckSpacing`) están descrito
   y separaciones. Se guarda también en `%Temp%\BlockRebar.log`. Pensado para familias cuyo
   `Elevation at Bottom` dice `<varies>`: dice qué caras inferiores ve el plugin y cuál toma
   como base.
-- **Guardar como valores por defecto** escribe `config.json`; **Armar** crea las barras
-  (entrega 2b); **Cancelar** no toca nada.
+- **Guardar como valores por defecto** escribe `config.json` (con el nombre exacto de cada
+  tipo de barra); **Armar** crea las barras; **Borrar armado del plugin** quita solo los
+  conjuntos marcados por el plugin en los elementos seleccionados; **Cancelar** no toca nada.
+- **Tipos de barra**: el nombre de `config.json` se busca primero exacto; si es un fragmento
+  que coincide con varios tipos (`5/8` con `5/8"` y `Ø 5/8"`), el desplegable se marca en
+  **amarillo** con la lista de candidatos y Armar queda desactivado hasta elegir uno. Nunca se
+  elige en silencio ni se sustituye por otro tipo.
+
+## Armado en Revit (`RebarGenerator`)
+
+Cada conjunto del plan se crea con `Rebar.CreateFromCurves` (polilínea con sus patas como
+tramos; F7 con estilo estribo/horquilla), se reparte como **array** (`SetLayoutAsFixedNumber`)
+y recibe la **Partición** de la plantilla y un comentario `BlockRebar F#` que lo marca como
+del plugin. **O se arma el bloque entero y bien, o no se arma**:
+
+1. **Plan**: si `ClashCheck` encuentra algún choque previsto, el elemento se rechaza antes de
+   crear nada.
+2. **Antes de crear cada conjunto**: el eje y cuatro fibras a medio diámetro de cada barra
+   prevista tienen que quedar dentro del hormigón (`Solid.IntersectWithCurve`).
+3. **Después de crear y regenerar**: se lee la geometría real de cada barra de cada conjunto
+   (radios de doblado y todas las posiciones) y se vuelve a comprobar.
+4. Cualquier fallo deshace la subtransacción del elemento (incluido el borrado previo de la
+   armadura anterior del plugin, que se conserva).
+5. **Comparación**: barras y longitudes leídas de Revit frente a la tabla prevista (con la
+   deducción de doblado del tipo); las diferencias se marcan en el informe.
+
+Si un elemento ya tiene armadura del plugin, al pulsar Armar se pregunta si se borra antes de
+rearmar o se conserva (duplicando). El informe final lista, por elemento, la tabla de
+cantidades por familia con pesos por diámetro, la comparación con Revit, los avisos y los
+rechazos; también queda en `%Temp%\BlockRebar.log`.
 
 ## Estado de las entregas
 
 - **Fase 1** (clases puras + tests): hecha. `cd Tests && dotnet run` → 286 comprobaciones,
   0 choques, 0 contactos no previstos, separaciones reales ≤ nominal + 5 mm.
-- **Entrega 2a** (esta): lectura del sólido, lámina en modo solo lectura y "Analizar sin
-  armar". **No crea barras**: el botón Armar está desactivado.
-- **Entrega 2b**: `RebarGenerator` (CreateFromCurves con patas, arrays, Partición, dos redes de
-  seguridad, subtransacción por elemento, informe con pesos).
+- **Entrega 2a**: lectura del sólido, lámina y "Analizar sin armar". Probada en Revit 2027.2
+  (Foundation Slab 3600 × 3300 × 1300 con foso perimetral: 0 choques, niveles en compartidas).
+- **Entrega 2b** (esta): `RebarGenerator` con las dos redes de seguridad, subtransacción por
+  elemento, arrays, Partición, borrado del armado del plugin, comparación con Revit e informe.
 - **Entrega 2c** (opcional): vistas de sección A y B en Revit.
 
 ## config.json
@@ -120,8 +148,9 @@ cd Tests && dotnet run
 
 ## Si algo falla en Revit
 
-Pega (1) el texto de **Analizar sin armar** (botón "Copiar al portapapeles"), (2) el archivo
-`%Temp%\BlockRebar.log` y (3) una captura de la lámina o del error.
+Prueba primero en una **copia del modelo**. Pega (1) el texto de **Analizar sin armar** o del
+informe final de Armar (botón "Copiar al portapapeles"), (2) el archivo `%Temp%\BlockRebar.log`
+y (3) una captura de la lámina, de las barras en Revit o del error.
 
 ## Estructura del código
 
@@ -134,7 +163,8 @@ Pega (1) el texto de **Analizar sin armar** (botón "Copiar al portapapeles"), (
 | `BlockSection.cs` | Sección pura: perfil, círculos, polilíneas, cotas, niveles y etiquetas. |
 | `BlockOutline.cs` | Lectura del sólido de Revit y sistema local (`BlockFrame`, perfil muestreado). |
 | `HostAnalysis.cs` | Resultado por elemento, dirección propia e informe del modo diagnóstico. |
-| `BarTypes.cs` | Tipos de barra del proyecto y diámetros reales. |
+| `BarTypes.cs`, `NameMatch.cs` | Tipos de barra del proyecto, diámetros reales y regla de nombres (exacto, fragmento único, ambiguo). |
+| `RebarGenerator.cs` | Crea los `Rebar` con las dos redes de seguridad, marca del plugin, borrado y comparación con lo previsto. |
 | `RebarOptionsWindow.cs`, `PlanPreview.cs`, `SectionPreview.cs`, `PreviewState.cs` | La lámina (WPF en código, sin XAML). |
 | `RevitTheme.cs`, `RibbonApp.cs`, `ArmarBloqueCommand.cs`, `Log.cs` | Tema oscuro, cinta, comando y registro. |
 | `AppConfig.cs`, `PartitionName.cs` | Configuración y plantilla de Partición. |

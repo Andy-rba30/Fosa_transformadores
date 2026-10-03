@@ -689,6 +689,17 @@ namespace BlockRebar.Tests
             Check(s == "BLQ-FT-01", "comodin vacio sin separador huerfano: " + s);
             s = PartitionName.Expand("{familia}/{conjunto}", new PartitionName.Source { Family = "F7", SetName = "murete 1 tramo 2" });
             Check(s == "F7/murete 1 tramo 2", "familia y conjunto: " + s);
+
+            // regla de nombres de tipo de barra: exacto primero; fragmento unico; fragmento ambiguo (no se elige en silencio)
+            var names = new[] { "5/8\"", "Ø 5/8\"", "16M", "3/8\"", "Ø 3/8\"", "10M" };
+            Check(NameMatch.Unique(names, "5/8\"") == "5/8\"", "nombre exacto gana aunque otros lo contengan: 5/8\"");
+            Check(NameMatch.Unique(names, "ø 5/8\"") == "Ø 5/8\"", "exacto sin distinguir mayusculas: Ø 5/8\"");
+            List<string> amb = NameMatch.Candidates(names, "5/8");
+            Check(NameMatch.IsAmbiguous(names, "5/8") && amb.Count == 2 && amb[0] == "5/8\"" && amb[1] == "Ø 5/8\"", "fragmento \"5/8\" ambiguo: " + string.Join(", ", amb));
+            Check(NameMatch.Unique(names, "3/8") == null && NameMatch.Candidates(names, "3/8").Count == 2, "fragmento \"3/8\" ambiguo: 2 candidatos");
+            Check(NameMatch.Unique(names, "16") == "16M", "fragmento unico: 16 -> 16M");
+            Check(NameMatch.Unique(names, "1/2") == null && NameMatch.Candidates(names, "1/2").Count == 0, "sin coincidencia: 1/2");
+            Check(NameMatch.Unique(names, "") == null && NameMatch.Unique(names, null) == null, "nombre vacio: ninguno");
         }
     }
 }

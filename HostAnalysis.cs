@@ -25,6 +25,9 @@ namespace BlockRebar
         /// <summary>Direccion propia: "" (la general), "long", "short", "x" o "y".</summary>
         public string DirectionOverride = "";
 
+        /// <summary>Conjuntos de armadura que el plugin ya creo en este elemento (comentario con la marca del plugin).</summary>
+        public List<ElementId> PluginRebars = new List<ElementId>();
+
         public bool CanBuild => Error == null && Outline != null && Topology(null) != null && Topology(null).Error == null;
 
         public string DirectionMode(AppConfig cfg) =>
@@ -55,11 +58,11 @@ namespace BlockRebar
             }
         }
 
-        public string Partition(AppConfig cfg, string setName, string family)
+        public string Partition(AppConfig cfg, string setName, string family, string layer = "")
         {
             return PartitionName.Expand(cfg.PartitionTemplate, new PartitionName.Source
             {
-                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, SetName = setName, Family = family
+                Mark = Mark, Id = Host.Id.ToString(), TypeName = TypeName, FamilyName = FamilyName, SetName = setName, Family = family, Layer = layer
             });
         }
 

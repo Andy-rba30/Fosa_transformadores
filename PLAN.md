@@ -556,10 +556,20 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] Revisión de choques (`ClashCheck`), regla de esquinas, retranqueo de F2, F5 por dentro de la pata más interior, cruces desfasados, `layoutMode` fromTop.
 - [x] Separación real máxima (`CheckSpacing`): 286 comprobaciones OK, F4 vuelve a 88 con barra exacta en cada esquina.
 - [x] Entrega 2a (lectura y diagnóstico, sin crear barras): `BlockOutline` (caras, zBase, zTope, fondos, rechazos con motivo, `BlockFrame` con perfil muestreado), `HostAnalysis` (informe), `BarTypes`, `Log`, `PreviewState`, `PlanPreview` (planta con cortes A–A / B–B arrastrables), `SectionPreview` (secciones con círculos, polilíneas, etiquetas, cotas, niveles, recubrimientos), `RebarOptionsWindow` (lista, paneles F1…F8, lámina, leyenda que aísla, "Analizar sin armar" con `ReportWindow`, Armar desactivado), `ArmarBloqueCommand` (sin transacción), README e INSTALADOR. `dotnet build BlockRebar.csproj -c Release` compila en Linux (0 errores). **Pendiente de probar en Revit 2027.2.**
-- [ ] Entrega 2b: `RebarGenerator` (CreateFromCurves con patas, arrays, Partición, dos redes de seguridad, subtransacción por elemento, informe con pesos) y activar el botón Armar (`RebarOptionsWindow.BuildAvailable`).
+- [x] 2a probada en Revit 2027.2 por el usuario ([653044 LOSA_TRANSF], Foundation Slab 3600 × 3300 × 1300: plataforma 2100 × 1800, murete en anillo, foso 600 × 800, 0 choques, tope 264.099 en compartidas). Correcciones: encuadre de las secciones con etiquetas y niveles (márgenes según el ancho de los textos), rótulos y cotas de la planta en bandas sin solapes.
+- [x] Regla de tipos de barra ambiguos (`NameMatch`): exacto primero; un fragmento con varios candidatos se marca en amarillo con la lista y Armar queda desactivado hasta elegir; "Guardar como valores por defecto" guarda el nombre exacto. 7 comprobaciones nuevas en `Tests/` (293 en total).
+- [x] Entrega 2b: `RebarGenerator` (CreateFromCurves con patas como tramos, F7 estilo estribo con reintento estándar, arrays `SetLayoutAsFixedNumber`, Partición + comentario `BlockRebar F#`, red de seguridad del plan por choques, red 1 antes de crear, red 2 con la geometría real, comparación de barras y longitudes con deducción de doblado), comando con subtransacción por elemento, pregunta "borrar y rearmar / conservar" si ya hay armadura del plugin, botón "Borrar armado del plugin" e informe final (`ReportWindow`) con tabla por familia y pesos. Compila en Linux (0 errores). **Pendiente de probar en Revit 2027.2.**
 - [ ] Entrega 2c (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.
 - [ ] Fase 4 (opcional): rejillas de foso.
+
+### Notas de implementación de la entrega 2b
+
+- La marca del plugin es el comentario de instancia `BlockRebar F#` (parámetro Comentarios); "Borrar armado del plugin" y la pregunta de rearmado solo tocan conjuntos con ese comentario, nunca otra armadura del elemento. La Partición sigue la plantilla (`BLQ-{marca}-{familia}`) y admite `{capa}`.
+- Red de seguridad del plan: `ClashCheck` con 1 mm de tolerancia; un choque previsto rechaza el elemento antes de crear nada. Las separaciones por encima de la nominal solo avisan.
+- Las fibras de comprobación se calculan por tramo (dos direcciones perpendiculares al tramo), así valen para barras horizontales, verticales (F6) y horquillas.
+- Longitud esperada = polilínea − Σ(2 R tan(θ/2) − R θ) por doblez, con R = medio diámetro interior de doblado del tipo (estándar, o de estribo en F7) + medio diámetro de barra; tolerancia de comparación 1 % o 5 mm por barra. Las barras se cuentan posición a posición (`DoesBarExistAtPosition`).
+- El borrado previo va dentro de la misma subtransacción que el armado: si el nuevo armado se rechaza, la armadura anterior se conserva.
 
 ### Notas de implementación de la entrega 2a
 

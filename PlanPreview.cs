@@ -187,7 +187,7 @@ namespace BlockRebar
             BlockTopology t = _f.Topology;
             double x0 = _x0 + _pan.X, y0 = _y0 + _pan.Y;
             double yA = y0 - (_state.CutA - t.VMin) * _k, xB = x0 + (_state.CutB - t.UMin) * _k;
-            double xa = x0 - 30, xb = x0 + t.Width * _k + 30, ya = y0 - t.Depth * _k - 30, yb = y0 + 30;
+            double xa = x0 - 32, xb = x0 + t.Width * _k + 32, ya = y0 - t.Depth * _k - 32, yb = y0 + 32;
             bool nearA = Math.Abs(m.Y - yA) <= 6 && m.X >= xa && m.X <= xb;
             bool nearB = Math.Abs(m.X - xB) <= 6 && m.Y >= ya && m.Y <= yb;
             if (nearA && nearB) return Math.Abs(m.Y - yA) <= Math.Abs(m.X - xB) ? 'A' : 'B';
@@ -231,12 +231,14 @@ namespace BlockRebar
             }
 
             BlockTopology t = _f.Topology;
-            double margin = 58;
-            double k = Math.Min((W - 2 * margin) / Math.Max(t.Width, 1e-6), (H - 2 * margin) / Math.Max(t.Depth, 1e-6)) * _zoom;
+            // bandas reservadas: izquierda (letra A, ejes), derecha (letra A, rotulo A-A, cota v), arriba (letra B, rotulo B-B, texto de hover), abajo (cota u, letra B, rotulo B-B, estado)
+            const double left = 66, right = 150, top = 58, bottom = 92;
+            double aw = Math.Max(W - left - right, 40), ah = Math.Max(H - top - bottom, 40);
+            double k = Math.Min(aw / Math.Max(t.Width, 1e-6), ah / Math.Max(t.Depth, 1e-6)) * _zoom;
             _k = k;
-            // origen sin zoom (esquina inferior izquierda del bloque); el zoom crece desde ahi y el desplazamiento se suma
-            _x0 = 0.5 * (W - t.Width * k / _zoom);
-            _y0 = 0.5 * (H + t.Depth * k / _zoom);
+            // origen sin zoom (esquina inferior izquierda del bloque, centrada en el area util); el zoom crece desde ahi y el desplazamiento se suma
+            _x0 = left + 0.5 * (aw - t.Width * k / _zoom);
+            _y0 = top + 0.5 * (ah - t.Depth * k / _zoom) + t.Depth * k / _zoom;
             double x0 = _x0 + _pan.X, y0 = _y0 + _pan.Y;
             Func<double, double> X = u => x0 + (u - t.UMin) * k;
             Func<double, double> Y = v => y0 - (v - t.VMin) * k;
@@ -291,18 +293,27 @@ namespace BlockRebar
                 }
             }
 
-            // ejes locales
-            double ax = X(t.UMin) - 4, ay = Y(t.VMin) + 26;
-            Arrow(ax, ay, ax + 36, ay, PlanColors.Dim);
-            Arrow(ax, ay, ax, ay - 36, PlanColors.Dim);
-            Text("u", ax + 38, ay - 8, PlanColors.Dim, 11, true);
-            Text("v", ax - 10, ay - 48, PlanColors.Dim, 11, true);
+            // ejes locales, fuera del bloque (esquina inferior izquierda)
+            double ax = X(t.UMin) - 44, ay = Y(t.VMin) + 10;
+            Arrow(ax, ay, ax + 30, ay, PlanColors.Dim);
+            Arrow(ax, ay, ax, ay - 30, PlanColors.Dim);
+            Text("u", ax + 20, ay + 1, PlanColors.Dim, 10, true);
+            Text("v", ax - 11, ay - 34, PlanColors.Dim, 10, true);
 
-            // cotas generales
+            // cotas generales: u bajo el bloque (en la mitad mas ancha que deja la linea B-B), v a la derecha (en la mitad mas alta que deja A-A)
             if (_state.ShowDims)
             {
-                Text(M(t.Width) + " (u)", X(0.5 * (t.UMin + t.UMax)) - 28, Y(t.VMin) + 36, PlanColors.Dim, 11);
-                Text(M(t.Depth) + " (v)", X(t.UMax) + 8, Y(0.5 * (t.VMin + t.VMax)) - 8, PlanColors.Dim, 11);
+                double yU = Y(t.VMin) + 14;
+                HDim(X(t.UMin), X(t.UMax), yU, PlanColors.Dim);
+                double uText = _state.CutB - t.UMin > t.UMax - _state.CutB ? 0.5 * (t.UMin + _state.CutB) : 0.5 * (_state.CutB + t.UMax);
+                Text(M(t.Width) + " (u)", X(uText) - 30, yU + 3, PlanColors.Dim, 10);
+                double xV = X(t.UMax) + 14;
+                VDim(xV, Y(t.VMin), Y(t.VMax), PlanColors.Dim);
+                double vText = _state.CutA - t.VMin > t.VMax - _state.CutA ? 0.5 * (t.VMin + _state.CutA) : 0.5 * (_state.CutA + t.VMax);
+                var tv = new TextBlock { Text = M(t.Depth) + " (v)", Foreground = PlanColors.Dim, FontSize = 10, IsHitTestVisible = false, LayoutTransform = new RotateTransform(-90) };
+                tv.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                SetLeft(tv, xV + 4); SetTop(tv, Y(vText) - 0.5 * tv.DesiredSize.Height);
+                Children.Add(tv);
             }
 
             // lineas de corte
@@ -315,10 +326,10 @@ namespace BlockRebar
             else
             {
                 string s = "planta: " + Families.Code(_state.PlanLayer) + " " + Families.Name(_state.PlanLayer) + " a su grosor; F4...F8 por su traza. " + _plan.Describe();
-                Text(s, 8, H - 20, PlanColors.Dim, 10);
-                if (_plan.Warnings.Count > 0) Text(string.Join(" | ", _plan.Warnings), 8, H - 36, Brushes.Firebrick, 10);
+                Text(s, 8, H - 17, PlanColors.Dim, 9);
+                if (_plan.Warnings.Count > 0) Text(string.Join(" | ", _plan.Warnings), 8, H - 31, Brushes.Firebrick, 9);
             }
-            if (_state.Hover != null) Text(HoverText(_state.Hover, _plan), 8, 8, Brushes.Black, 11, true);
+            if (_state.Hover != null) Text(HoverText(_state.Hover, _plan), 8, 6, Brushes.Black, 11, true);
         }
 
         /// <summary>Descripcion de la barra bajo el raton: familia, diametro, separacion del conjunto y longitud.</summary>
@@ -389,9 +400,10 @@ namespace BlockRebar
                 // flechas de mirada hacia +v (en la seccion A-A u crece hacia la derecha)
                 Arrow(x1 + 6, y, x1 + 6, y - 16, brush);
                 Arrow(x2 - 6, y, x2 - 6, y - 16, brush);
-                Text(letter, x1 - 12, y - 9, brush, 13, true);
-                Text(letter, x2 + 2, y - 9, brush, 13, true);
-                Text(letter + "-" + letter + "  v = " + M(_state.CutA), x2 - 92, y + 3, brush, 9);
+                Text(letter, x1 - 13, y - 9, brush, 13, true);
+                Text(letter, x2 + 3, y - 9, brush, 13, true);
+                // rotulo en la banda derecha, junto a la letra (la cota v queda entre el bloque y la linea)
+                Text(letter + "-" + letter + "  v = " + M(_state.CutA), x2 + 16, y - 7, brush, 9);
             }
             else
             {
@@ -400,9 +412,30 @@ namespace BlockRebar
                 // flechas de mirada hacia -u (en la seccion B-B v crece hacia la derecha)
                 Arrow(x, y1 + 6, x - 16, y1 + 6, brush);
                 Arrow(x, y2 - 6, x - 16, y2 - 6, brush);
-                Text(letter, x - 4, y1 - 18, brush, 13, true);
-                Text(letter, x - 4, y2 + 2, brush, 13, true);
-                Text(letter + "-" + letter + "  u = " + M(_state.CutB), x + 4, y1 - 2, brush, 9);
+                Text(letter, x - 4, y1 - 19, brush, 13, true);
+                Text(letter, x - 4, y2 + 3, brush, 13, true);
+                // rotulo en la banda inferior, a la derecha de la letra (la cota u queda entre el bloque y la letra)
+                Text(letter + "-" + letter + "  u = " + M(_state.CutB), x + 10, y2 + 5, brush, 9);
+            }
+        }
+
+        private void HDim(double x1, double x2, double y, Brush b)
+        {
+            Children.Add(new Line { X1 = x1, Y1 = y, X2 = x2, Y2 = y, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
+            foreach (double x in new[] { x1, x2 })
+            {
+                Children.Add(new Line { X1 = x, Y1 = y - 4, X2 = x, Y2 = y + 4, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
+                Children.Add(new Line { X1 = x - 3, Y1 = y + 3, X2 = x + 3, Y2 = y - 3, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
+            }
+        }
+
+        private void VDim(double x, double y1, double y2, Brush b)
+        {
+            Children.Add(new Line { X1 = x, Y1 = y1, X2 = x, Y2 = y2, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
+            foreach (double y in new[] { y1, y2 })
+            {
+                Children.Add(new Line { X1 = x - 4, Y1 = y, X2 = x + 4, Y2 = y, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
+                Children.Add(new Line { X1 = x - 3, Y1 = y + 3, X2 = x + 3, Y2 = y - 3, Stroke = b, StrokeThickness = 0.8, IsHitTestVisible = false });
             }
         }
 

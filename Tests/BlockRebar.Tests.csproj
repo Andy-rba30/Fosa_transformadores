@@ -23,6 +23,7 @@
     <Compile Include="..\ClashCheck.cs" Link="ClashCheck.cs" />
     <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
     <Compile Include="..\PartitionName.cs" Link="PartitionName.cs" />
+    <Compile Include="..\NameMatch.cs" Link="NameMatch.cs" />
   </ItemGroup>
 
 </Project>

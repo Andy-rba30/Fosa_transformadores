@@ -36,7 +36,7 @@ namespace BlockRebar
         private readonly List<(PlannedBar bar, Point a, Point b, double r)> _hits = new List<(PlannedBar, Point, Point, double)>();
 
         private const double FtToMm = 304.8;
-        private const double MarginLeft = 118, MarginRight = 128, MarginTop = 44, MarginBottom = 74;
+        private const double MarginTop = 44, MarginBottom = 74;
         private static readonly int[] Scales = { 5, 10, 15, 20, 25, 30, 40, 50, 75, 100, 125, 150, 200, 250, 300, 500 };
 
         public SectionPreview(PreviewState state)
@@ -139,6 +139,17 @@ namespace BlockRebar
             }
             SectionCut cut = _cut;
             double w = Math.Max(cut.SMax - cut.SMin, 1e-6), hT = Math.Max(cut.ZTop, 1e-6);
+            // margenes laterales segun el ancho real de los textos que van a cada lado (etiquetas a la izquierda; niveles y etiquetas "der" a la derecha),
+            // asi el encaje (y el doble clic) incluye etiquetas, niveles y cotas, no solo el hormigon
+            double leftText = 0, rightText = 0;
+            if (_state.ShowLabels && _plan != null && _plan.Error == null)
+                foreach (SectionLabel lb in cut.Labels.Where(l => _state.Visible(l.Family)))
+                {
+                    double wt = TextWidth(Families.Code(lb.Family) + " " + lb.Text, 10, false);
+                    if (lb.Side == "der") rightText = Math.Max(rightText, wt); else leftText = Math.Max(leftText, wt);
+                }
+            foreach (SectionLevel lv in cut.Levels) rightText = Math.Max(rightText, TextWidth("▽ " + Elev(lv.Elevation) + "  " + lv.Name, 10, true));
+            double MarginLeft = Math.Max(70, leftText + 44), MarginRight = Math.Max(60, rightText + 22);
             double aw = Math.Max(W - MarginLeft - MarginRight, 40), ah = Math.Max(H - MarginTop - MarginBottom, 40);
             double k = Math.Min(aw / w, ah / hT) * _zoom;
             // origen sin zoom: la seccion centrada en el area de dibujo, cara inferior abajo
@@ -373,6 +384,14 @@ namespace BlockRebar
             SetLeft(t, x); SetTop(t, y);
             Children.Add(t);
             return t;
+        }
+
+        private double TextWidth(string s, double size, bool bold)
+        {
+            var t = new TextBlock { Text = s, FontSize = size };
+            if (bold) t.FontWeight = FontWeights.SemiBold;
+            t.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return t.DesiredSize.Width;
         }
     }
 }

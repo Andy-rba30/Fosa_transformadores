@@ -29,8 +29,12 @@ namespace BlockRebar
 
         /// <summary>Configuracion final si el usuario pulso "Armar"; null si cancelo.</summary>
         public AppConfig Result { get; private set; }
-        /// <summary>True cuando el armado en Revit esta disponible (entrega 2b); en 2a el boton Armar esta desactivado.</summary>
-        public static bool BuildAvailable = false;
+        /// <summary>True cuando el armado en Revit esta disponible (desde la entrega 2b).</summary>
+        public static bool BuildAvailable = true;
+        /// <summary>True si el usuario pulso "Borrar armado del plugin": el comando borra y no arma.</summary>
+        public bool DeleteRequested { get; private set; }
+        /// <summary>Claves de tipo ("F1:u", "F4") cuyo nombre en config.json coincide con varios tipos, con sus candidatos.</summary>
+        private readonly Dictionary<string, BarTypes.Ambiguity> _ambiguous = new Dictionary<string, BarTypes.Ambiguity>();
 
         // controles
         private ComboBox _dir;
@@ -45,7 +49,7 @@ namespace BlockRebar
         private ComboBox _levelRef, _planLayer;
         private CheckBox _showDims, _showLabels, _showCovers;
         private TextBlock _message, _partitionPreview, _caption, _status;
-        private Button _buildButton, _analyzeButton;
+        private Button _buildButton, _analyzeButton, _deleteButton;
         private PlanPreview _plan;
         private SectionPreview _secA, _secB;
         private readonly Dictionary<Family, Border> _legend = new Dictionary<Family, Border>();
@@ -92,6 +96,11 @@ namespace BlockRebar
             ShowInTaskbar = false;
             FontSize = 12;
 
+            foreach ((Family f, string layer, string name) in AllTypeKeys(_cfg))
+            {
+                List<BarTypes.Info> cands = BarTypes.Candidates(_barTypes, name);
+                if (cands.Count > 1) _ambiguous[BarTypes.Key(f, layer)] = new BarTypes.Ambiguity { Key = BarTypes.Key(f, layer), Name = name, Candidates = cands.Select(i => i.Name).ToList() };
+            }
             _state.PlanLayer = Families.Parse(_cfg.Preview.PlanLayer);
             _state.ShowDims = _cfg.Preview.ShowDims;
             _state.ShowLabels = _cfg.Preview.ShowLabels;
@@ -449,6 +458,17 @@ namespace BlockRebar
             return grid;
         }
 
+        /// <summary>Todas las claves de tipo de la configuracion (activas o no) con su nombre.</summary>
+        private static IEnumerable<(Family, string, string)> AllTypeKeys(AppConfig c)
+        {
+            yield return (Family.F1, "u", c.F1.U.BarTypeName); yield return (Family.F1, "v", c.F1.V.BarTypeName);
+            yield return (Family.F2, "u", c.F2.U.BarTypeName); yield return (Family.F2, "v", c.F2.V.BarTypeName);
+            yield return (Family.F3, "u", c.F3.U.BarTypeName); yield return (Family.F3, "v", c.F3.V.BarTypeName);
+            yield return (Family.F4, "", c.F4.BarTypeName); yield return (Family.F5, "", c.F5.BarTypeName);
+            yield return (Family.F6, "", c.F6.BarTypeName); yield return (Family.F7, "", c.F7.BarTypeName);
+            yield return (Family.F8, "", c.F8.BarTypeName);
+        }
+
         private UIElement BuildButtons()
         {
             var panel = new DockPanel();
@@ -461,6 +481,23 @@ namespace BlockRebar
                                      "el motivo exacto de rechazo o el armado previsto con sus avisos, choques y separaciones. Se guarda tambien en " + Log.Path;
             _analyzeButton.Click += (s, e) => OnAnalyze();
             buttons.Children.Add(_analyzeButton);
+
+            int existing = _items.Sum(i => i.PluginRebars.Count);
+            _deleteButton = new Button { Content = "Borrar armado del plugin", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0), IsEnabled = existing > 0 };
+            _deleteButton.ToolTip = existing > 0
+                ? "Borra solo los " + existing + " conjunto(s) con la marca del plugin (comentario \"" + RebarGenerator.Marker + "\") en los elementos seleccionados. El resto de la armadura no se toca."
+                : "Los elementos seleccionados no tienen armadura creada por el plugin.";
+            ToolTipService.SetShowOnDisabled(_deleteButton, true);
+            _deleteButton.Click += (s, e) =>
+            {
+                MessageBoxResult r = MessageBox.Show(this, "Se borraran " + existing + " conjunto(s) de armadura creados por el plugin en " + _items.Count(i => i.PluginRebars.Count > 0) +
+                                                           " elemento(s). El resto de la armadura no se toca. ¿Continuar?", "Borrar armado del plugin", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (r != MessageBoxResult.Yes) return;
+                DeleteRequested = true;
+                DialogResult = true;
+                Close();
+            };
+            buttons.Children.Add(_deleteButton);
 
             var save = new Button { Content = "Guardar como valores por defecto", Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(4, 0, 4, 0) };
             save.ToolTip = "Guarda lo elegido en config.json (" + AppConfig.ConfigPath() + ") para las proximas veces.";
@@ -652,16 +689,37 @@ namespace BlockRebar
             return v;
         }
 
-        private void MarkTypes(AppConfig c)
+        private static readonly Brush AmbiguousBorder = new SolidColorBrush(Color.FromRgb(0xE0, 0xC0, 0x40));
+
+        /// <summary>Marca los desplegables: amarillo si el nombre de config.json es ambiguo y aun no se ha elegido; rojo si falta y se pulso Armar.</summary>
+        private List<string> MarkTypes(AppConfig c)
         {
             var needed = new HashSet<string>();
-            foreach ((Family f, string layer, string name) in c.BarTypesNeeded()) needed.Add(Families.Code(f) + (layer != "" ? ":" + layer : ""));
+            foreach ((Family f, string layer, string name) in c.BarTypesNeeded()) needed.Add(BarTypes.Key(f, layer));
+            var pending = new List<string>();
             foreach (var kv in _types)
             {
-                bool bad = _strictTypes && needed.Contains(kv.Key) && kv.Value.SelectedIndex < 0;
-                if (bad) { kv.Value.BorderBrush = RevitTheme.Error; kv.Value.BorderThickness = new Thickness(2); }
-                else { kv.Value.ClearValue(Control.BorderBrushProperty); kv.Value.ClearValue(Control.BorderThicknessProperty); }
+                ComboBox cb = kv.Value;
+                bool unresolved = cb.SelectedIndex < 0 && _ambiguous.TryGetValue(kv.Key, out BarTypes.Ambiguity amb);
+                if (unresolved)
+                {
+                    amb = _ambiguous[kv.Key];
+                    cb.Background = RevitTheme.OwnValue; cb.BorderBrush = AmbiguousBorder; cb.BorderThickness = new Thickness(2);
+                    cb.ToolTip = "AMBIGUO: \"" + amb.Name + "\" de config.json coincide con varios tipos (" + string.Join(", ", amb.Candidates) +
+                                 "). Elige uno; \"Guardar como valores por defecto\" guardara su nombre exacto.";
+                    if (needed.Contains(kv.Key)) pending.Add(amb.Describe());
+                }
+                else if (_strictTypes && needed.Contains(kv.Key) && cb.SelectedIndex < 0)
+                {
+                    cb.ClearValue(Control.BackgroundProperty); cb.BorderBrush = RevitTheme.Error; cb.BorderThickness = new Thickness(2);
+                }
+                else
+                {
+                    cb.ClearValue(Control.BackgroundProperty); cb.ClearValue(Control.BorderBrushProperty); cb.ClearValue(Control.BorderThicknessProperty);
+                    if (cb.SelectedIndex >= 0) cb.ToolTip = "Tipo de barra (RebarBarType) cargado en el proyecto. El diametro real sale del tipo.";
+                }
             }
+            return pending;
         }
 
         // ------------------------------------------------------------------
@@ -675,7 +733,7 @@ namespace BlockRebar
             {
                 AppConfig scratch = ReadConfig(out string error);
                 PlanDiameters d = BarTypes.Diameters(_barTypes, scratch, out List<string> missing);
-                MarkTypes(scratch);
+                List<string> pending = MarkTypes(scratch);
 
                 _angle.IsEnabled = scratch.Direction.Mode == "angle";
                 foreach (Family f in Families.All) _panels[f].IsEnabled = scratch.Enabled(f);
@@ -689,14 +747,15 @@ namespace BlockRebar
                     {
                         runs.kind.Text = (good ? "Bloque" : (item.Outline == null ? "SIN ARMAR" : "RECHAZADO")) + ": ";
                         runs.kind.Foreground = good ? RevitTheme.Ok : RevitTheme.Error;
-                        runs.detail.Text = text;
+                        runs.detail.Text = text + (item.PluginRebars.Count > 0 ? "  [ya tiene " + item.PluginRebars.Count + " conjunto(s) del plugin]" : "");
                     }
                 }
                 _buildButton.Content = "Armar " + ok + " elemento(s)";
-                _buildButton.IsEnabled = BuildAvailable && ok > 0 && error == null;
-                _buildButton.ToolTip = BuildAvailable
-                    ? "Crea las barras en Revit (cada bloque en su subtransaccion: o se arma entero y bien, o no se arma)."
-                    : "Entrega 2a (solo lectura): la creacion de barras en Revit llega en la entrega 2b. Usa \"Analizar sin armar\" y la lamina.";
+                _buildButton.IsEnabled = BuildAvailable && ok > 0 && error == null && pending.Count == 0;
+                _buildButton.ToolTip = !BuildAvailable
+                    ? "La creacion de barras en Revit no esta disponible en esta entrega."
+                    : pending.Count > 0 ? "Tipo de barra ambiguo: elige uno en los desplegables marcados en amarillo."
+                    : "Crea las barras en Revit (cada bloque en su subtransaccion: o se arma entero y bien, o no se arma).";
                 _analyzeButton.IsEnabled = _items.Count > 0;
 
                 bool newElement = false;
@@ -727,7 +786,8 @@ namespace BlockRebar
                 ShowViews(newElement);
 
                 if (error != null) { _message.Foreground = RevitTheme.Error; _message.Text = error; }
-                else if (ReferenceEquals(_message.Foreground, RevitTheme.Error)) _message.Text = "";
+                else if (pending.Count > 0) { _message.Foreground = AmbiguousBorder; _message.Text = "Tipo de barra ambiguo, elige uno en el desplegable: " + string.Join("; ", pending); }
+                else if (ReferenceEquals(_message.Foreground, RevitTheme.Error) || ReferenceEquals(_message.Foreground, AmbiguousBorder)) _message.Text = "";
             }
             catch (Exception ex)
             {
@@ -838,7 +898,7 @@ namespace BlockRebar
         private void OnAnalyze()
         {
             AppConfig scratch = ReadConfig(out string error);
-            PlanDiameters d = BarTypes.Diameters(_barTypes, scratch, out List<string> missing);
+            PlanDiameters d = BarTypes.Diameters(_barTypes, scratch, out List<string> missing, out List<BarTypes.Ambiguity> ambiguous);
             var sb = new StringBuilder();
             sb.AppendLine("ANALIZAR SIN ARMAR - Bloques con foso - " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             sb.AppendLine("No se ha creado ni modificado nada en el modelo.");
@@ -848,6 +908,7 @@ namespace BlockRebar
             sb.AppendLine("familias activas: " + string.Join(", ", Families.All.Where(scratch.Enabled).Select(Families.Code)) +
                           (missing.Count > 0 ? "; SIN TIPO DE BARRA: " + string.Join(", ", missing) : ""));
             sb.AppendLine("tipos de barra del proyecto: " + (_barTypes.Count == 0 ? "NINGUNO (carga una familia de armadura)" : string.Join(", ", _barTypes.Select(b => b.Display))));
+            foreach (BarTypes.Ambiguity a in _ambiguous.Values) sb.AppendLine("tipo AMBIGUO en config.json: " + a.Describe() + (ambiguous.Any(x => x.Key == a.Key) ? " -> pendiente de elegir" : " -> ya elegido en la ventana"));
             sb.AppendLine("niveles en: " + AppConfig.LevelReferenceName(scratch.LevelReference) + " (desfase " + NumText(SafeOffset(scratch.LevelReference) * 304.8) + " mm sobre la cota interna)");
             if (error != null) sb.AppendLine("AVISO: valores no validos en la ventana: " + error);
             sb.AppendLine("log: " + Log.Path);
@@ -893,6 +954,13 @@ namespace BlockRebar
             AppConfig c = ReadConfig(out string error);
             if (error != null) { _message.Foreground = RevitTheme.Error; _message.Text = error; return; }
             BarTypes.Diameters(_barTypes, c, out List<string> missing);
+            List<string> pending = MarkTypes(c);
+            if (pending.Count > 0)
+            {
+                _message.Foreground = AmbiguousBorder;
+                _message.Text = "Tipo de barra ambiguo, elige uno en el desplegable: " + string.Join("; ", pending);
+                return;
+            }
             if (missing.Count > 0)
             {
                 _strictTypes = true;
