@@ -1,0 +1,36 @@
+{
+  "coverBottomMm": 75,
+  "coverTopMm": 50,
+  "coverEdgeMm": 75,
+  "coverWallMm": 40,
+  "wallMaxWidthMm": 300,
+
+  "direction": { "mode": "long", "angleDeg": 0 },
+
+  "F1_bottomMesh":   { "enabled": true,
+                       "u": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "v": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "legUpMm": 300 },
+  "F2_recessMesh":   { "enabled": true, "extent": "full", "belowRecessFloorMm": 75, "anchorageMm": 600,
+                       "u": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "v": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "legDownMm": 220 },
+  "F3_topMesh":      { "enabled": true,
+                       "u": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "v": { "barTypeName": "5/8\"", "spacingMm": 125 },
+                       "legDownMm": 340 },
+  "F4_recessFaceL":  { "enabled": true, "barTypeName": "5/8\"", "spacingMm": 125, "verticalMm": 1000, "footMm": 370 },
+  "F5_recessFaceH":  { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 200, "shape": "segments", "lapMm": 400 },
+  "F6_wallVertical": { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 125 },
+  "F7_wallHairpin":  { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 125, "legMm": 350, "placement": "aligned" },
+  "F8_wallHoriz":    { "enabled": true, "barTypeName": "3/8\"", "spacingMm": 200, "layers": 1, "shape": "segments", "lapMm": 400 },
+
+  "partitionTemplate": "BLQ-{marca}-{familia}",
+  "toleranceMm": 2,
+  "minBarLengthMm": 300,
+
+  "levelReference": "shared",
+  "preview": { "showDims": true, "showLabels": true, "showCovers": false, "planLayer": "F1" },
+  "sectionViews": { "enabled": false, "scale": 20, "marginMm": 500, "nameTemplate": "{marca} - Sección {letra}",
+                    "tagFamilyName": "", "showSolid": false }
+}

@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Revit 2027 corre sobre .NET 10. Para 2025/2026 seria net8.0-windows y el paquete 2025.* / 2026.*. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>BlockRebar</AssemblyName>
+    <RootNamespace>BlockRebar</RootNamespace>
+    <!-- Se copia Clipper2Lib.dll al output (hace falta junto a la DLL); las DLL de Revit no (ExcludeAssets=runtime) -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <!-- Permite compilar (solo para comprobar) en Linux/macOS; en Windows no cambia nada -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Revit 2027.2: las DLL de la API vienen en los paquetes de Nice3point -->
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPI" Version="2027.2.*" ExcludeAssets="runtime" />
+    <PackageReference Include="Nice3point.Revit.Api.RevitAPIUI" Version="2027.2.*" ExcludeAssets="runtime" />
+    <!-- Booleanas y offsets 2D (clasificacion de plataformas y muretes, insets por arista) -->
+    <PackageReference Include="Clipper2" Version="1.5.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- El programa de pruebas de consola tiene su propio proyecto -->
+    <Compile Remove="Tests\**" />
+    <None Remove="Tests\**" />
+    <None Update="config.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <!-- Copia automatica al directorio de add-ins de Revit al compilar en Debug (solo en Windows) -->
+  <Target Name="CopyToRevit" AfterTargets="Build" Condition="'$(Configuration)'=='Debug' And '$(OS)'=='Windows_NT'">
+    <PropertyGroup>
+      <AddinDir>$(AppData)\Autodesk\Revit\Addins\2027\BlockRebar\</AddinDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(AddinDir)" />
+    <Exec Command="powershell -NoProfile -Command &quot;Remove-Item -Path '$(AddinDir)*.old' -Force -ErrorAction SilentlyContinue; if (Test-Path '$(AddinDir)$(TargetFileName)') { try { Copy-Item '$(TargetPath)' '$(AddinDir)' -Force -ErrorAction Stop } catch { $bak = '$(AddinDir)$(TargetFileName).' + [guid]::NewGuid().ToString('N') + '.old'; Move-Item '$(AddinDir)$(TargetFileName)' $bak -Force; Copy-Item '$(TargetPath)' '$(AddinDir)' -Force } } else { Copy-Item '$(TargetPath)' '$(AddinDir)' -Force }&quot;" />
+    <Copy SourceFiles="$(TargetDir)Clipper2Lib.dll" DestinationFolder="$(AddinDir)" Condition="Exists('$(TargetDir)Clipper2Lib.dll')" ContinueOnError="true" />
+    <Copy SourceFiles="$(ProjectDir)config.json" DestinationFolder="$(AddinDir)" />
+    <Copy SourceFiles="$(TargetDir)$(TargetName).pdb" DestinationFolder="$(AddinDir)" Condition="Exists('$(TargetDir)$(TargetName).pdb')" ContinueOnError="true" />
+    <Copy SourceFiles="$(ProjectDir)BlockRebar.addin" DestinationFolder="$(AppData)\Autodesk\Revit\Addins\2027\" />
+  </Target>
+
+</Project>

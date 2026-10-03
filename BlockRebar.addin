@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Application">
+    <Name>ARBA Bloques</Name>
+    <Assembly>BlockRebar\BlockRebar.dll</Assembly>
+    <FullClassName>BlockRebar.RibbonApp</FullClassName>
+    <ClientId>c4e1a7d2-5b86-4f3a-9e0d-7a2c6b1f8d53</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Uso interno</VendorDescription>
+  </AddIn>
+  <AddIn Type="Command">
+    <Name>Armar bloque con foso</Name>
+    <Text>Armar bloque con foso</Text>
+    <Description>Genera el armado de bloques macizos de cimentacion con fosos o canaletas abiertas por arriba (fundaciones de transformador, bloques de equipo, fosos de bombas) a partir de la geometria del elemento: mallas inferior, bajo foso y superior, barras en L y horizontales en las caras de foso, verticales, horquillas y horizontales en los muretes, con una ventana previa tipo lamina (planta y secciones A-A y B-B).</Description>
+    <Assembly>BlockRebar\BlockRebar.dll</Assembly>
+    <FullClassName>BlockRebar.ArmarBloqueCommand</FullClassName>
+    <ClientId>e9b3d5f1-2a74-4c68-8d1e-5f0b9c3a7e26</ClientId>
+    <VendorId>LOCAL</VendorId>
+    <VendorDescription>Uso interno</VendorDescription>
+    <VisibilityMode>NotVisibleInFamily</VisibilityMode>
+  </AddIn>
+</RevitAddIns>

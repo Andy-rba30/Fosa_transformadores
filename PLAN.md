@@ -38,8 +38,8 @@ add-in añada su botón al desplegable común.
 | Fase | Contenido | Estado |
 |------|-----------|--------|
 | 0 | Clonar Acero-Zapatas, leer README/PLAN/código, escribir este PLAN.md | hecho, OK recibido |
-| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **en curso** |
-| 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | pendiente |
+| 1 | Clases puras (`Geometry2D`, `Poly2D`, `BlockTopology`, `BlockPlan`, `BlockSection`, `AppConfig`, `PartitionName`) + `Tests/` con el caso del plano y los casos (a) y (b); mostrar la salida de los tests | **hecho** (247 comprobaciones OK; el proyecto principal compila en Linux) |
+| 2 | Capa Revit (`BlockOutline`, `HostAnalysis`, `RebarGenerator`, comando, cinta) y ventana tipo lámina (`RebarOptionsWindow`, `PlanPreview`, `SectionPreview`, `PreviewState`); README e INSTALADOR; compilación con `EnableWindowsTargeting` | **siguiente** |
 | 2b (opcional) | Botón **Crear vistas de sección en Revit** tras Armar (`SectionViews.cs`): dos `ViewSection` A y B, acero sin ocultar, etiquetas opcionales. No bloquea la fase 1 | pendiente |
 | 3 | Pruebas del usuario en Revit 2027.2 y correcciones | pendiente |
 | 4 (opcional) | Botón **Rejillas de foso**: ángulos de borde, pernos y rejillas | solo si se pide |
@@ -447,6 +447,36 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 9. **Estado compartido** (`PreviewState`) entre las tres vistas: cortes, barra resaltada,
    familia aislada e interruptores; zoom y desplazamiento propios de cada vista.
 
+### Notas de implementación de la fase 1 (lo que se decidió al escribir el código)
+
+- **"Ancho mínimo" de una región** = diámetro del mayor círculo inscrito (bisección sobre la
+  erosión con Clipper2). En un murete es su espesor; en una plataforma en anillo lo manda el
+  lado más ancho del anillo (caso (b): 1250 aunque la banda estrecha mida 1000). Es
+  exactamente el valor que se compara con `wallMaxWidthMm`.
+- **Aristas partidas por adyacencia**: antes de clasificar, cada anillo recibe los vértices
+  de las demás regiones, fosos y del cuerpo que caen sobre sus aristas, así una arista que
+  toca a la vez un foso y un murete queda en dos aristas con su tipo cada una.
+- **Inset por arista con escalón**: dos aristas colineales con retranqueo distinto dan rectas
+  desplazadas paralelas; el contorno retranqueado hace un escalón perpendicular en el vértice
+  (no se inclina).
+- **Barras del mismo conjunto** = traslaciones a lo largo de la normal del conjunto (los
+  puntos coinciden al quitar la componente según la normal): las dos mitades de una barra
+  partida por un foso son conjuntos distintos.
+- **Barras tangentes a un hueco retranqueado**: si el corte pasa justo por un vértice se
+  desplaza una micra hacia el lado que deja más barra. Las barras que pasan dentro del margen
+  de retranqueo de un foso (sin cruzarlo) se parten igualmente y llevan pata (conservador).
+- **Horquillas en las esquinas**: la sonda perpendicular desde la esquina recorre el murete
+  contiguo y no encuentra cara de foso; ahí se usa el ancho nominal del tramo (sonda desde su
+  punto medio). Si ni el nominal da a un foso (testeros de un murete recto) se omiten con aviso.
+- **Extremos rectos** llegan al recubrimiento (medio diámetro más allá de la línea de ejes);
+  en un límite interno plataforma / murete la barra se queda justo en el límite.
+- **Etiquetas** con la separación nominal de la familia ("@125"), no con el paso real del
+  conjunto (que es menor o igual, `n = techo(L/s)`).
+- **`Clipper2`**: la unión de anillos sueltos usa la regla par-impar (las caras de Revit no se
+  solapan); la de regiones se hace por pares (subject / clip) para que los solapes no se
+  anulen. Precisión de 6 decimales en pies. Las versiones 1.5.x no tienen `Union(subject,
+  fillRule, precision)` para `PathsD`: se usa `BooleanOp`.
+
 ## Decisiones confirmadas por el usuario (OK al plan)
 
 1. **Bloque sin fosos** (solo huecos pasantes o macizo): se rechaza remitiendo a Zapatas.
@@ -474,7 +504,7 @@ las esquinas (L = 3500 → 5 piezas de 695 × 590) y los del lado de 4800 van en
 - [x] Clonado y análisis de Acero-Zapatas (arquitectura, convenciones, tests).
 - [x] PLAN.md.
 - [x] OK del usuario al plan (decisiones de arriba).
-- [ ] Fase 1: clases puras (incluida `BlockSection`) + Tests (salida de los tests en el informe).
+- [x] Fase 1: clases puras (incluida `BlockSection`) + Tests: `cd Tests && dotnet run` → 247 comprobaciones correctas, 0 fallos. `dotnet build BlockRebar.csproj -c Release` compila (0 errores) y deja `Clipper2Lib.dll` junto a `BlockRebar.dll`.
 - [ ] Fase 2: capa Revit, ventana tipo lámina (planta + A-A + B-B), README, INSTALADOR, compilación.
 - [ ] Fase 2b (opcional): botón "Crear vistas de sección en Revit".
 - [ ] Fase 3: pruebas en Revit 2027.2 y correcciones.

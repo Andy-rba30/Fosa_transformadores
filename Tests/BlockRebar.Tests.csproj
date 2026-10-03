@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Programa de consola que prueba las clases puras (sin Revit): Geometry2D, Poly2D, BlockTopology,
+       BlockPlan, BlockSection, AppConfig, PartitionName.  dotnet run (desde esta carpeta). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>BlockRebar.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Clipper2" Version="1.5.*" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Geometry2D.cs" Link="Geometry2D.cs" />
+    <Compile Include="..\Poly2D.cs" Link="Poly2D.cs" />
+    <Compile Include="..\BlockTopology.cs" Link="BlockTopology.cs" />
+    <Compile Include="..\BlockPlan.cs" Link="BlockPlan.cs" />
+    <Compile Include="..\BlockSection.cs" Link="BlockSection.cs" />
+    <Compile Include="..\AppConfig.cs" Link="AppConfig.cs" />
+    <Compile Include="..\PartitionName.cs" Link="PartitionName.cs" />
+  </ItemGroup>
+
+</Project>
