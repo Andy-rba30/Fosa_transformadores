@@ -371,10 +371,11 @@ namespace BlockRebar.Tests
             Check(p.GroupsOf(Family.F4) == 4, "F4 en 4 conjuntos, uno por cara (" + p.GroupsOf(Family.F4) + ")");
             if (f4.Count > 0)
             {
-                // una barra de una cara a lo largo de u (pie sin desfasar) y otra de una cara a lo largo de v (pie un diametro mas bajo)
+                // una barra de una cara a lo largo de u y otra de una cara a lo largo de v: esquinas salientes de la
+                // plataforma (los pies divergen), sin desfase entre ambas
                 PlannedBar b = f4.First(x => Math.Abs(x.Normal.U) > 0.5);
                 PlannedBar bv = f4.First(x => Math.Abs(x.Normal.V) > 0.5);
-                Near(b.Points[1].Z - bv.Points[1].Z, 15.875, "los pies de las caras a lo largo de v van un diametro mas bajos que los de las caras a lo largo de u");
+                Near(b.Points[1].Z - bv.Points[1].Z, 0, "los pies de las caras a lo largo de u y de v a la misma cota (esquinas salientes)");
                 Check(b.Points.Count == 3, "F4 en L (3 puntos)");
                 Near(b.Points[0].Z, 1300 - 50 - 7.9375, "F4 empieza en el tope menos recubrimiento");
                 Near(b.Points[0].Z - b.Points[1].Z, 1000, "vertical de F4 de 1000");
@@ -491,7 +492,7 @@ namespace BlockRebar.Tests
             Check(aa0.Levels.Count == 3, "3 niveles: tope, fondo de foso, cara inferior (" + aa0.Levels.Count + ")");
             Near(aa0.Levels[0].Elevation, 260606 + 1300, "nivel del tope con la elevacion de la base (261.906)");
             SectionPolyline l4 = aa0.Polylines.FirstOrDefault(x => x.Family == Family.F4);
-            Check(l4 != null && l4.Points.Count == 3 && Math.Abs(ToMm(l4.Points[1].V) - (242.1 - 15.875)) < 0.6, "F4 en A-A (caras a lo largo de v) como L con el pie a z=226");
+            Check(l4 != null && l4.Points.Count == 3 && Math.Abs(ToMm(l4.Points[1].V) - 242.1) < 0.6, "F4 en A-A (caras a lo largo de v) como L con el pie a z=242, sin desfase (esquinas salientes: los pies divergen)");
             SectionCut bb0 = BlockSection.Cut(p, t, new SectionLine(false, Mm(2400)), Mm(2));
             SectionPolyline l4b = bb0.Polylines.FirstOrDefault(x => x.Family == Family.F4);
             Check(l4b != null && l4b.Points.Count == 3 && Math.Abs(ToMm(l4b.Points[1].V) - 242.1) < 0.6, "F4 en B-B (caras a lo largo de u) como L con el pie a z=242");
@@ -634,6 +635,8 @@ namespace BlockRebar.Tests
             Check(p.CountOf(Family.F4) == 2 * 13 + 2 * 9, "F4 entre las barras de F2 con extremos exactos: 13 + 13 + 9 + 9 barras (" + p.CountOf(Family.F4) + ")");
             PlannedBar f4 = p.Bars.First(b => b.Family == Family.F4);
             Check(t.RecessAt(f4.Points[2].Plan) != null, "el pie de F4 queda bajo el foso central");
+            PlannedBar f4u = p.Bars.First(b => b.Family == Family.F4 && Math.Abs(b.Normal.U) > 0.5), f4v = p.Bars.First(b => b.Family == Family.F4 && Math.Abs(b.Normal.V) > 0.5);
+            Near(f4u.Points[1].Z - f4v.Points[1].Z, 15.875, "foso central (esquinas entrantes: los pies convergen): los de las caras a lo largo de v un diametro mas bajos");
             // F5 por tramos prolongados mas alla de la esquina entrante: cruce con la barra contigua + traslape 400
             double o5 = 40 + 15.875 + 15.875 + 15.875 + 4.7625;
             PlannedBar f5long = p.Bars.Where(b => b.Family == Family.F5).OrderByDescending(b => b.Length).First();
@@ -724,18 +727,21 @@ namespace BlockRebar.Tests
                 Check(pc.Warnings.Any(w => w.Contains("F4") && w.Contains("media altura")), "aviso de recolocacion: " + string.Join(" | ", pc.Warnings));
                 Clashes(pc, "pie de F4 recolocado");
             }
-            // vertical largo: el pie llegaria a F1 o mas abajo, se apoya sobre la parrilla inferior con aviso
-            c = Cfg(); c.F4.VerticalMm = 1250;   // el pie caeria a z = -8
-            pc = BlockPlan.Build(tp, c, Diam(c));
-            Check(pc.Error == null, "plan con pie bajo F1 sin error: " + pc.Error);
-            if (pc.Error == null)
+            // vertical largo: por encima del maximo (pie apoyado sobre F1, 1242.06 - 114.69 = 1127.4) queda en el
+            // maximo con aviso; por debajo, el pedido; igual en las caras a lo largo de u y de v (esquinas salientes)
+            foreach (double vert in new[] { 1250.0, 1130.0, 1100.0 })
             {
-                double f1Top = 75 + 2 * 15.875;
+                c = Cfg(); c.F4.VerticalMm = vert;
+                pc = BlockPlan.Build(tp, c, Diam(c));
+                Check(pc.Error == null, "plan con vertical de F4 de " + vert + " sin error: " + pc.Error);
+                if (pc.Error != null) continue;
+                double expect = Math.Min(vert, 1242.0625 - (75 + 2 * 15.875 + 7.9375));
                 var f4l = pc.Bars.Where(b => b.Family == Family.F4).ToList();
-                Check(f4l.Any(b => Math.Abs(ToMm(b.Points[1].Z) - (f1Top + 7.9375)) < 0.6), "pie de F4 apoyado sobre F1 (z = " + (f1Top + 7.9375) + ")");
-                Check(f4l.All(b => ToMm(b.Points[1].Z) < 250), "el pie baja al alargar el vertical (no queda a media altura)");
-                Check(pc.Warnings.Any(w => w.Contains("F4") && w.Contains("parrilla inferior")), "aviso de apoyo sobre F1: " + string.Join(" | ", pc.Warnings));
-                Clashes(pc, "pie de F4 apoyado sobre F1");
+                Check(f4l.All(b => Math.Abs((b.Points[0].Z - b.Points[1].Z) * Ft - expect) < 0.1),
+                      "vertical de F4 pedido " + vert + ": " + expect.ToString("0.0") + " en todas las caras (" +
+                      string.Join(", ", f4l.Select(b => ((b.Points[0].Z - b.Points[1].Z) * Ft).ToString("0.0")).Distinct()) + ")");
+                Check((vert > expect) == pc.Warnings.Any(w => w.Contains("F4") && w.Contains("parrilla inferior")), "aviso de maximo solo si se pasa: " + string.Join(" | ", pc.Warnings));
+                Clashes(pc, "vertical de F4 de " + vert);
             }
             // vertical corto: el pie quedaria dentro del foso, se alarga con aviso
             c = Cfg(); c.F4.VerticalMm = 500;

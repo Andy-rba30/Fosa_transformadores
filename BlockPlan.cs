@@ -934,7 +934,8 @@ namespace BlockRebar
                     return false;
                 }
                 if (zFoot < rest - _tol)
-                    Warn("F4: el pie en " + face + " alcanzaba F1 (z=" + ToMm(zFoot) + " mm); se apoya sobre la parrilla inferior (z=" + ToMm(rest) + " mm)");
+                    Warn("F4: en " + face + " el vertical pedido (" + ToMm(zTop4 - zFoot) + " mm) pasa del maximo; queda en " + ToMm(zTop4 - rest) +
+                         " mm con el pie apoyado sobre la parrilla inferior (z=" + ToMm(rest) + " mm)");
                 zFoot = rest;
             }
             // choque con F2: a media altura entre ambas mallas
@@ -955,9 +956,12 @@ namespace BlockRebar
                 Error = "F4: el pie en " + face + " queda bajo el recubrimiento inferior (z=" + ToMm(zFoot) + " mm); reduce verticalMm";
                 return false;
             }
-            // los pies de caras contiguas convergen en las esquinas entrantes (fosos) a la misma cota:
-            // los de las caras a lo largo de v van un diametro mas abajo (contacto previsto)
-            if (!edge.AlongU)
+            // los pies de caras contiguas convergen en las esquinas entrantes de la plataforma (foso
+            // rodeado por ella) a la misma cota: alli los de las caras a lo largo de v van un diametro
+            // mas abajo (contacto previsto); en las esquinas salientes divergen y no se desfasan
+            bool converges = (edge.Prev != null && edge.Prev.Kind == EdgeKind.Recess && Geometry2D.Cross(edge.Prev.Dir, edge.Dir) < -1e-9) ||
+                             (edge.Next != null && edge.Next.Kind == EdgeKind.Recess && Geometry2D.Cross(edge.Dir, edge.Next.Dir) < -1e-9);
+            if (!edge.AlongU && converges)
             {
                 if (zFoot - d4 - 0.5 * d4 >= lo + _tol) zFoot -= d4;
                 else if (zFoot + d4 + 0.5 * d4 <= hi - _tol && zFoot + d4 <= maxFoot + _tol) zFoot += d4;

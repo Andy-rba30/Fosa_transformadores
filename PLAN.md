@@ -158,8 +158,8 @@ reales de los tipos de barra):
   extremos de cara (exterior o de foso); rectas en los límites internos con un murete.
 - F4: en cada cara de foso de plataforma, a `coverWall + d/2`; vertical desde
   `zTope − ct − d/2` bajando `verticalMm`, pie `footMm` horizontal hacia el foso (bajo su
-  fondo). Si el pie llega a F1 (o más abajo) se **apoya sobre la parrilla inferior**
-  (`zF1tope + d/2`) y se avisa; si queda a la altura de F2 (±d) se coloca a **media altura
+  fondo). Si el pie llega a F1 (o más abajo) el vertical queda en su **máximo**, con el pie
+  **apoyado sobre la parrilla inferior** (`zF1tope + d/2`), y se avisa; si queda a la altura de F2 (±d) se coloca a **media altura
   entre ambas mallas** y se avisa; si el vertical no llega bajo el fondo del foso se alarga hasta
   `zFoso − coverWall − d/2` y se avisa; si el pie no cabe hasta la cara opuesta se acorta
   al recubrimiento y se avisa. Posiciones a lo largo de la cara desde `coverWall + 1.5 d`
@@ -543,8 +543,10 @@ familia de rejilla generada con `Document.EditFamily` / plantilla, marca y borra
   hasta el límite admisible de la cara). Ninguna puede superar la nominal + 5 mm. Dos barras
   iguales a más de la separación nominal no forman conjunto (quedan sueltas).
 - **Cruces de esquina a la misma cota**: los tramos de F5 y F8 de las caras a lo largo de v
-  van un diámetro más bajos que los de las caras a lo largo de u; lo mismo los pies de F4
-  (que convergen en las esquinas entrantes de un foso). El cruce queda en contacto previsto.
+  van un diámetro más bajos que los de las caras a lo largo de u; lo mismo los pies de F4,
+  pero solo en las caras con una esquina entrante de la plataforma (foso rodeado por ella),
+  donde convergen; en las esquinas salientes divergen y todos van a la misma cota. El cruce
+  queda en contacto previsto.
 - **F5 por dentro de la pata más interior de F3** (la de las barras v, retranqueadas un
   diámetro más): plano único `cw + d4 + d3u + d3v + d5/2` en todas las caras y toda la altura.
 - **Tramos colineales** de F5 / F8 de dos fosos alineados sobre la misma cara que se solapan
