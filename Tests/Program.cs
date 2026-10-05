@@ -724,6 +724,19 @@ namespace BlockRebar.Tests
                 Check(pc.Warnings.Any(w => w.Contains("F4") && w.Contains("media altura")), "aviso de recolocacion: " + string.Join(" | ", pc.Warnings));
                 Clashes(pc, "pie de F4 recolocado");
             }
+            // vertical largo: el pie llegaria a F1 o mas abajo, se apoya sobre la parrilla inferior con aviso
+            c = Cfg(); c.F4.VerticalMm = 1250;   // el pie caeria a z = -8
+            pc = BlockPlan.Build(tp, c, Diam(c));
+            Check(pc.Error == null, "plan con pie bajo F1 sin error: " + pc.Error);
+            if (pc.Error == null)
+            {
+                double f1Top = 75 + 2 * 15.875;
+                var f4l = pc.Bars.Where(b => b.Family == Family.F4).ToList();
+                Check(f4l.Any(b => Math.Abs(ToMm(b.Points[1].Z) - (f1Top + 7.9375)) < 0.6), "pie de F4 apoyado sobre F1 (z = " + (f1Top + 7.9375) + ")");
+                Check(f4l.All(b => ToMm(b.Points[1].Z) < 250), "el pie baja al alargar el vertical (no queda a media altura)");
+                Check(pc.Warnings.Any(w => w.Contains("F4") && w.Contains("parrilla inferior")), "aviso de apoyo sobre F1: " + string.Join(" | ", pc.Warnings));
+                Clashes(pc, "pie de F4 apoyado sobre F1");
+            }
             // vertical corto: el pie quedaria dentro del foso, se alarga con aviso
             c = Cfg(); c.F4.VerticalMm = 500;
             pc = BlockPlan.Build(tp, c, Diam(c));

@@ -158,8 +158,9 @@ reales de los tipos de barra):
   extremos de cara (exterior o de foso); rectas en los límites internos con un murete.
 - F4: en cada cara de foso de plataforma, a `coverWall + d/2`; vertical desde
   `zTope − ct − d/2` bajando `verticalMm`, pie `footMm` horizontal hacia el foso (bajo su
-  fondo). Si el pie queda a la altura de F1 o F2 (±d) se baja/sube a **media altura entre
-  ambas mallas** y se avisa; si el vertical no llega bajo el fondo del foso se alarga hasta
+  fondo). Si el pie llega a F1 (o más abajo) se **apoya sobre la parrilla inferior**
+  (`zF1tope + d/2`) y se avisa; si queda a la altura de F2 (±d) se coloca a **media altura
+  entre ambas mallas** y se avisa; si el vertical no llega bajo el fondo del foso se alarga hasta
   `zFoso − coverWall − d/2` y se avisa; si el pie no cabe hasta la cara opuesta se acorta
   al recubrimiento y se avisa. Posiciones a lo largo de la cara desde `coverWall + 1.5 d`
   de cada esquina de foso (o `coverEdge + d/2` si la esquina es exterior), `n = techo(L/s)`.

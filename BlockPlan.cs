@@ -922,15 +922,27 @@ namespace BlockRebar
                 zFoot = maxFoot;
                 Warn("F4: en " + face + " el vertical se alarga a " + ToMm(zTop4 - zFoot) + " mm para que el pie quede bajo el fondo del foso (z=" + ToMm(rc.ZFloor) + " mm)");
             }
-            // choque con F1 / F2: a media altura entre ambas mallas
             double lo = Cfg.F1.Enabled ? _f1Top : Cb;
             double hi = Cfg.F2.Enabled ? _f2Bot : maxFoot;
-            bool hitsF1 = Cfg.F1.Enabled && zFoot - 0.5 * d4 < _f1Top + _tol;
+            // pie que llega a F1 (o mas abajo): patilla apoyada sobre la parrilla inferior
+            if (Cfg.F1.Enabled && zFoot - 0.5 * d4 < _f1Top + _tol)
+            {
+                double rest = _f1Top + 0.5 * d4;
+                if (rest > maxFoot + _tol)
+                {
+                    Error = "F4: no hay sitio para el pie entre F1 y el fondo del foso en " + face;
+                    return false;
+                }
+                if (zFoot < rest - _tol)
+                    Warn("F4: el pie en " + face + " alcanzaba F1 (z=" + ToMm(zFoot) + " mm); se apoya sobre la parrilla inferior (z=" + ToMm(rest) + " mm)");
+                zFoot = rest;
+            }
+            // choque con F2: a media altura entre ambas mallas
             bool hitsF2 = Cfg.F2.Enabled && zFoot + 0.5 * d4 > _f2Bot - _tol && zFoot - 0.5 * d4 < _f2Top + _tol;
-            if (hitsF1 || hitsF2)
+            if (hitsF2)
             {
                 double mid = 0.5 * (lo + hi);
-                Warn("F4: el pie en " + face + " chocaba con " + (hitsF1 ? "F1" : "F2") + " a z=" + ToMm(zFoot) + " mm; se coloca a media altura entre ambas mallas (z=" + ToMm(mid) + " mm)");
+                Warn("F4: el pie en " + face + " chocaba con F2 a z=" + ToMm(zFoot) + " mm; se coloca a media altura entre ambas mallas (z=" + ToMm(mid) + " mm)");
                 zFoot = mid;
                 if (zFoot - 0.5 * d4 < lo - _tol || zFoot + 0.5 * d4 > hi + _tol || zFoot > maxFoot + _tol)
                 {
