@@ -72,8 +72,9 @@ namespace BlockRebar
     /// tolerancia (1 mm). Los contactos (distancia igual a la suma de radios) solo se admiten
     /// donde estan previstos: las dos capas de una malla apoyadas una en otra, F6 con la pata
     /// exterior de F7, F8 con esa misma pata y con la vertical de esquina de F6 de la cara
-    /// contigua (mismo plano), las patas de F3 contra F4 y contra F5, F5 bajo F3, y los cruces
-    /// de esquina de F5 / F8 / pies de F4 desplazados un diametro. Pura (sin Revit).
+    /// contigua (mismo plano), las patas de F3 contra F4 y contra F5, F5 bajo F3, el pie de F4
+    /// apoyado sobre F1, y los cruces de esquina de F5 / F8 / pies de F4 desplazados un
+    /// diametro. Pura (sin Revit).
     /// </summary>
     public static class ClashCheck
     {
@@ -83,7 +84,8 @@ namespace BlockRebar
             (Family.F1, Family.F1), (Family.F2, Family.F2), (Family.F3, Family.F3),
             (Family.F5, Family.F5), (Family.F8, Family.F8),
             (Family.F6, Family.F7), (Family.F7, Family.F8), (Family.F6, Family.F8),
-            (Family.F3, Family.F4), (Family.F3, Family.F5), (Family.F4, Family.F4)
+            (Family.F3, Family.F4), (Family.F3, Family.F5), (Family.F4, Family.F4),
+            (Family.F1, Family.F4)
         };
 
         public static bool ContactExpected(Family a, Family b) =>
